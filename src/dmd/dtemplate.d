@@ -6294,7 +6294,13 @@ extern (C++) class TemplateInstance : ScopeDsymbol
             return false;
         }
 
-        if (global.params.useUnitTests)
+        // There are linker errors wrt missing symbols on certain projects
+        // (not on CI) that disappear when this is done. The following is
+        // a temporary hack and there is active work going to work out a
+        // way to remove it in order to improve compilation speed. It also
+        // doesn't always work in the sense that even with the code below,
+        // linker errors may occur in a way that -allinst can't fix.
+        if (global.params.useUnitTests || global.params.debuglevel)
         {
             // Prefer instantiations from root modules, to maximize link-ability.
             if (minst.isRoot())
