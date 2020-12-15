@@ -828,7 +828,7 @@ void toObjFile(Dsymbol ds, bool multiobj)
 
         override void visit(TemplateInstance ti)
         {
-            //printf("TemplateInstance.toObjFile(%p, '%s')\n", ti, ti.toChars());
+            printf("TemplateInstance.toObjFile(%p, '%s@%s')\n", ti, ti.toChars(), ti.loc.toChars);
             if (!isError(ti) && ti.members)
             {
                 if (!ti.needsCodegen())

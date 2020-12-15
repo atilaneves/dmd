@@ -6187,6 +6187,7 @@ extern (C++) class TemplateInstance : ScopeDsymbol
      */
     final bool needsCodegen()
     {
+        printf("needsCodegen, minst for %s at %s is %p\n", toChars, loc.toChars, minst);
         if (!minst)
         {
             // If this is a speculative instantiation,
@@ -6199,19 +6200,32 @@ extern (C++) class TemplateInstance : ScopeDsymbol
             this.tnext = null;
             this.tinst = null;
 
+            printf("checking if tinst needs codegen\n");
+            const tinstNeeds = tinst && tinst.needsCodegen();
+            printf("tinst: %p  needs? %d\n", tinst, tinstNeeds);
             // Determine necessity of tinst before tnext.
-            if (tinst && tinst.needsCodegen())
+            //if (tinst && tinst.needsCodegen())
+                if(tinst && tinstNeeds)
             {
                 minst = tinst.minst; // cache result
                 if (global.params.allInst && minst)
                 {
                     return true;
                 }
+                printf("*** minst: %p is root? %d  root imports? %d\n",
+                       minst,
+                       minst && minst.isRoot,
+                       minst && minst.rootImports,
+                    );
                 assert(minst);
                 assert(minst.isRoot() || minst.rootImports());
                 return true;
             }
-            if (tnext && (tnext.needsCodegen() || tnext.minst))
+
+                const tnextNeeds = tnext && tnext.needsCodegen;
+                printf("tnext: %p  needs? %d\n", tnext, tnextNeeds);
+                //if (tnext && (tnext.needsCodegen() || tnext.minst))
+                if(tnext && (tnextNeeds || tnext.minst))
             {
                 minst = tnext.minst; // cache result
                 if (global.params.allInst && minst)
@@ -6242,6 +6256,7 @@ extern (C++) class TemplateInstance : ScopeDsymbol
          */
         if (enclosing && enclosing.inNonRoot())
         {
+            printf("enclosing and non root\n");
             if (tinst)
             {
                 auto r = tinst.needsCodegen();
@@ -6312,6 +6327,7 @@ extern (C++) class TemplateInstance : ScopeDsymbol
             TemplateInstance tnext = this.tnext;
             this.tnext = null;
 
+            if(tnext) printf("calling needsCodegen on tnext\n");
             if (tnext && !tnext.needsCodegen() && tnext.minst)
             {
                 minst = tnext.minst; // cache result
