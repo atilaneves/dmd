@@ -95,9 +95,17 @@ private extern(C++) final class Semantic3Visitor : Visitor
 
     override void visit(TemplateInstance tempinst)
     {
-        static if (LOG)
+        static if (LOG || true)
         {
-            printf("TemplateInstance.semantic3('%s'), semanticRun = %d\n", tempinst.toChars(), tempinst.semanticRun);
+            printf("+TemplateInstance.semantic3('%s@%s') %p, semanticRun = %d  errors = %d members? %d\n",
+                   tempinst.toChars(), tempinst.loc.toChars, tempinst, tempinst.semanticRun,
+                   cast(int) tempinst.errors, tempinst.members !is null,
+                );
+            scope(exit) printf("-TemplateInstance.semantic3('%s@%s') %p, semanticRun = %d  errors = %d members? %d\n",
+                   tempinst.toChars(), tempinst.loc.toChars, tempinst, tempinst.semanticRun,
+                   cast(int) tempinst.errors, tempinst.members !is null,
+                );
+
         }
         //if (toChars()[0] == 'D') *(char*)0=0;
         if (tempinst.semanticRun >= PASS.semantic3)
@@ -130,8 +138,14 @@ private extern(C++) final class Semantic3Visitor : Visitor
                 Dsymbol s = (*tempinst.members)[i];
                 s.semantic3(sc);
                 if (tempinst.gagged && global.errors != olderrors)
+                    printf("    3: breaking cos gagged for member %d %s@%s %p\n",
+                           cast(int)i, s.toChars, s.loc.toChars, s);
+                if (tempinst.gagged && global.errors != olderrors)
                     break;
             }
+            printf("  s3('%s@%s) Called sema3 on all members, global.errors %d olderrors %d\n",
+                   tempinst.toChars, tempinst.loc.toChars,
+                   cast(int) global.errors, cast(int) olderrors);
 
             if (global.errors != olderrors)
             {

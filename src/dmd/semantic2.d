@@ -134,6 +134,8 @@ private extern(C++) final class Semantic2Visitor : Visitor
 
     override void visit(TemplateInstance tempinst)
     {
+        printf("+TemplateInstance.semantic2('%s@%s')\n", tempinst.toChars(), tempinst.loc.toChars);
+        scope(exit) printf("-TemplateInstance.semantic2('%s@%s')\n", tempinst.toChars(), tempinst.loc.toChars);
         if (tempinst.semanticRun >= PASS.semantic2)
             return;
         tempinst.semanticRun = PASS.semantic2;

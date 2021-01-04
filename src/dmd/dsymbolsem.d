@@ -2869,6 +2869,7 @@ private extern(C++) final class DsymbolSemanticVisitor : Visitor
 
     override void visit(TemplateInstance ti)
     {
+        //printf("templateInstanceSemantic %s@%s\n", ti.toChars, ti.loc.toChars);
         templateInstanceSemantic(ti, sc, null);
     }
 
@@ -6874,4 +6875,3 @@ private void aliasAssignSemantic(AliasAssign ds, Scope* sc)
 
     ds.semanticRun = PASS.semanticdone;
 }
-

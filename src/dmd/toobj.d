@@ -828,24 +828,28 @@ void toObjFile(Dsymbol ds, bool multiobj)
 
         override void visit(TemplateInstance ti)
         {
-            printf("TemplateInstance.toObjFile(%p, '%s@%s')\n", ti, ti.toChars(), ti.loc.toChars);
+            printf("TemplateInstance.toObjFile(%p, '%s@%s') error? %d members? %d\n",
+                   ti, ti.toChars(), ti.loc.toChars, isError(ti), ti.members !is null);
             if (!isError(ti) && ti.members)
             {
+                printf("--- not an error. tnext? %d tnext error? %d\n",
+                       ti.tnext !is null, ti.tnext && isError(ti.tnext));
                 if (!ti.needsCodegen())
                 {
-                    //printf("-speculative (%p, %s)\n", ti, ti.toPrettyChars());
+                    printf("--- speculative (%p, %s)\n", ti, ti.toPrettyChars());
                     return;
                 }
-                //printf("TemplateInstance.toObjFile(%p, '%s')\n", ti, ti.toPrettyChars());
+                printf("--- TemplateInstance.toObjFile(%p, '%s@%s')\n", ti, ti.toPrettyChars(), ti.loc.toChars);
 
                 if (multiobj)
                 {
+                    printf("--- multiobj\n");
                     // Append to list of object files to be written later
                     obj_append(ti);
                 }
                 else
                 {
-                    ti.members.foreachDsymbol( (s) { s.accept(this); } );
+                    ti.members.foreachDsymbol( (s) { printf("--- foreach for %s@%s\n", s.toChars, s.loc.toChars); s.accept(this); } );
                 }
             }
         }

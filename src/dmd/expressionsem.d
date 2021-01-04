@@ -2574,7 +2574,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
 
     override void visit(IdentifierExp exp)
     {
-        static if (LOGSEMANTIC)
+        static if (LOGSEMANTIC || true)
         {
             printf("IdentifierExp::semantic('%s')\n", exp.ident.toChars());
         }
@@ -11560,11 +11560,13 @@ Expression trySemantic(Expression exp, Scope* sc)
  */
 Expression unaSemantic(UnaExp e, Scope* sc)
 {
-    static if (LOGSEMANTIC)
+    static if (LOGSEMANTIC || true)
     {
-        printf("UnaExp::semantic('%s')\n", e.toChars());
+        printf("UnaExp::semantic('%s@%s')\n", e.toChars(), e.loc.toChars);
     }
     Expression e1x = e.e1.expressionSemantic(sc);
+    if (e1x.op == TOK.error) printf("   UnaExp::ERROR\n");
+    //if (e1x.op == TOK.error) throw new Exception("UnaErr");
     if (e1x.op == TOK.error)
         return e1x;
     e.e1 = e1x;
