@@ -5791,6 +5791,8 @@ extern (C++) class TemplateInstance : ScopeDsymbol
     private ushort _nest;       // for recursive pretty printing detection, 3 MSBs reserved for flags (below)
     ubyte inuse;                // for recursive expansion detection
 
+    static __gshared TemplateInstance[] gaggedTemplateInstances;
+
     private enum Flag : uint
     {
         semantictiargsdone = 1u << (_nest.sizeof * 8 - 1), // MSB of _nest

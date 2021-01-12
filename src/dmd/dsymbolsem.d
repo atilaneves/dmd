@@ -5912,6 +5912,7 @@ void templateInstanceSemantic(TemplateInstance tempinst, Scope* sc, Expressions*
     }
 
     tempinst.gagged = (global.gag > 0);
+    TemplateInstance.gaggedTemplateInstances ~= tempinst;
 
     tempinst.semanticRun = PASS.semantic;
 
