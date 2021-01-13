@@ -5912,7 +5912,8 @@ void templateInstanceSemantic(TemplateInstance tempinst, Scope* sc, Expressions*
     }
 
     tempinst.gagged = (global.gag > 0);
-    TemplateInstance.gaggedTemplateInstances ~= tempinst;
+    if (tempinst.gagged)
+        TemplateInstance.gaggedTemplateInstances ~= tempinst;
 
     tempinst.semanticRun = PASS.semantic;
 
@@ -6268,6 +6269,13 @@ void templateInstanceSemantic(TemplateInstance tempinst, Scope* sc, Expressions*
             }
         }
     }
+
+    tempinst.members.foreachDsymbol(
+        (s)
+        {
+            if(s.errors && !global.errors) global.errors = 1;
+        }
+    );
 
     if (global.errors != errorsave)
         goto Laftersemantic;

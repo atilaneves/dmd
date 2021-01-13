@@ -942,7 +942,17 @@ extern (C++) abstract class Type : ASTNode
         auto tcopy = this.syntaxCopy();
 
         const errors = global.startGagging();
+
+        auto oldGaggedInstances = TemplateInstance.gaggedTemplateInstances;
+        scope(exit) TemplateInstance.gaggedTemplateInstances = oldGaggedInstances;
+        TemplateInstance.gaggedTemplateInstances = [];
+
         Type t = typeSemantic(this, loc, sc);
+
+        foreach(i, ti; TemplateInstance.gaggedTemplateInstances) {
+            ti.gagged = false;
+        }
+
         if (global.endGagging(errors) || t.ty == Terror) // if any errors happened
         {
             t = null;
