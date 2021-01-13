@@ -937,23 +937,23 @@ extern (C++) abstract class Type : ASTNode
     final Type trySemantic(const ref Loc loc, Scope* sc)
     {
         printf("+trySemantic(%s) ge: %d gg: %d gge: %d\n", toChars(), global.errors, global.gag, global.gaggedErrors);
+        scope(exit) printf("-trySemantic(%s) ge: %d gg: %d gge: %d\n", toChars(), global.errors, global.gag, global.gaggedErrors);
 
         // Needed to display any deprecations that were gagged
         auto tcopy = this.syntaxCopy();
 
         const errors = global.startGagging();
         scope(exit) TemplateInstance.gaggedTemplateInstances = [];
-        printf("    About to try semantic, # of gagged templates is %zu\n",
-               TemplateInstance.gaggedTemplateInstances.length);
+        printf("    About to call typeSemantic, # of gagged templates is %zu gg is %d\n",
+               TemplateInstance.gaggedTemplateInstances.length, global.gag);
         Type t = typeSemantic(this, loc, sc);
 
         printf("    foreach for %s\n", toChars);
         foreach(i, tempinst; TemplateInstance.gaggedTemplateInstances) {
-            printf("    #%zu %s\n", i, tempinst.toChars);
+            printf("    #%zu %s errors? %d\n", i, tempinst.toChars, tempinst.errors);
             //tempinst.gagged = false;
         }
 
-        printf("-trySemantic(%s) ge: %d gg: %d gge: %d e: %d\n", toChars, global.errors, global.gag, global.gaggedErrors, errors);
         if (global.endGagging(errors) || t.ty == Terror) // if any errors happened
         {
             t = null;

@@ -190,7 +190,7 @@ private extern(C++) final class Semantic2Visitor : Visitor
         }
         static if (LOG || true)
         {
-            printf("-TemplateInstance.semantic2('%s')\n", tempinst.toChars());
+            printf("-TemplateInstance.semantic2('%s') ge %d gg %d gge %d\n", tempinst.toChars(), global.errors, global.gag, global.gaggedErrors);
         }
     }
 

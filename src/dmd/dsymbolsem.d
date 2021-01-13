@@ -5854,6 +5854,9 @@ private extern(C++) final class DsymbolSemanticVisitor : Visitor
 void templateInstanceSemantic(TemplateInstance tempinst, Scope* sc, Expressions* fargs)
 {
     //printf("[%s] TemplateInstance.dsymbolSemantic('%s', this=%p, gag = %d, sc = %p)\n", tempinst.loc.toChars(), tempinst.toChars(), tempinst, global.gag, sc);
+    printf("+ templateInstanceSemantic %s ge %d gg %d gge %d\n", tempinst.toChars, global.errors, global.gag, global.gaggedErrors);
+    scope(exit) printf("- templateInstanceSemantic %s ge %d gg %d gge %d\n", tempinst.toChars, global.errors, global.gag, global.gaggedErrors);
+
     version (none)
     {
         for (Dsymbol s = tempinst; s; s = s.parent)
@@ -6256,6 +6259,8 @@ void templateInstanceSemantic(TemplateInstance tempinst, Scope* sc, Expressions*
     sc2.minst = tempinst.minst;
     sc2.stc &= ~STC.deprecated_;
     tempinst.tryExpandMembers(sc2);
+    printf("!!! after expanding %s now ge %d gge %d\n", tempinst.toChars, global.errors, global.gaggedErrors);
+    printf("!!! After my thing ");
 
     tempinst.semanticRun = PASS.semanticdone;
 
@@ -6317,6 +6322,9 @@ void templateInstanceSemantic(TemplateInstance tempinst, Scope* sc, Expressions*
          * on this template.
          */
         tempinst.semantic2(sc2);
+    }
+    if (global.errors != errorsave) {
+        printf("!!! Jumping to error handling after semantic2 for %s\n", tempinst.toChars);
     }
     if (global.errors != errorsave)
         goto Laftersemantic;
@@ -6438,12 +6446,14 @@ void templateInstanceSemantic(TemplateInstance tempinst, Scope* sc, Expressions*
     }
 
 Laftersemantic:
+    printf("!!! Laftersemantic ge %d es %d\n", global.errors, errorsave);
     sc2.pop();
     _scope.pop();
 
     // Give additional context info if error occurred during instantiation
-    if (global.errors != errorsave)
+    if (global.errors != errorsave || tempinst.errors)
     {
+        printf("!!! tempinst.errors? %d\n", tempinst.errors);
         if (!tempinst.errors)
         {
             if (!tempdecl.literal)
@@ -6458,6 +6468,7 @@ Laftersemantic:
             // instance/symbol lists we added it to and reset our state to
             // finish clean and so we can try to instantiate it again later
             // (see https://issues.dlang.org/show_bug.cgi?id=4302 and https://issues.dlang.org/show_bug.cgi?id=6602).
+            printf("!!! Removing instance %s\n", tempinst.toChars);
             tempdecl.removeInstance(tempdecl_instance_idx);
             if (target_symbol_list)
             {
