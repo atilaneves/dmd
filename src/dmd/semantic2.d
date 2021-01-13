@@ -137,9 +137,9 @@ private extern(C++) final class Semantic2Visitor : Visitor
         if (tempinst.semanticRun >= PASS.semantic2)
             return;
         tempinst.semanticRun = PASS.semantic2;
-        static if (LOG)
+        static if (LOG || true)
         {
-            printf("+TemplateInstance.semantic2('%s')\n", tempinst.toChars());
+            printf("+TemplateInstance.semantic2('%s') gagged? %d\n", tempinst.toChars(), tempinst.gagged);
         }
         if (!tempinst.errors && tempinst.members)
         {
@@ -188,7 +188,7 @@ private extern(C++) final class Semantic2Visitor : Visitor
             sc = sc.pop();
             sc.pop();
         }
-        static if (LOG)
+        static if (LOG || true)
         {
             printf("-TemplateInstance.semantic2('%s')\n", tempinst.toChars());
         }

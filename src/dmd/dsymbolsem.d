@@ -5912,7 +5912,14 @@ void templateInstanceSemantic(TemplateInstance tempinst, Scope* sc, Expressions*
     }
 
     tempinst.gagged = (global.gag > 0);
-    TemplateInstance.gaggedTemplateInstances ~= tempinst;
+    if(tempinst.gagged) {
+        printf("    Adding %s %p to existing %zu gagged template instances\n",
+               tempinst.toChars, tempinst, TemplateInstance.gaggedTemplateInstances.length);
+        if(TemplateInstance.gaggedTemplateInstances.length) printf("    gagged instances now:\n");
+        foreach(i, ti; TemplateInstance.gaggedTemplateInstances)
+            printf("        #%zu: %s %p\n", i, ti.toChars, ti);
+        TemplateInstance.gaggedTemplateInstances ~= tempinst;
+    }
 
     tempinst.semanticRun = PASS.semantic;
 
