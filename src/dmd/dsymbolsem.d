@@ -4685,6 +4685,8 @@ private extern(C++) final class DsymbolSemanticVisitor : Visitor
     override void visit(StructDeclaration sd)
     {
         //printf("StructDeclaration::semantic(this=%p, '%s', sizeok = %d)\n", sd, sd.toPrettyChars(), sd.sizeok);
+        printf("+StructDeclaration.semantic %s\n", sd.toChars);
+        scope(exit) printf("-StructDeclaration.semantic %s\n", sd.toChars);
 
         //static int count; if (++count == 20) assert(0);
 
@@ -6147,6 +6149,7 @@ void templateInstanceSemantic(TemplateInstance tempinst, Scope* sc, Expressions*
 
     // Store the place we added it to in target_symbol_list(_idx) so we can
     // remove it later if we encounter an error.
+    //Dsymbols* target_symbol_list = tempinst.appendToModuleMember();
     Dsymbols* target_symbol_list = tempinst.appendToModuleMember();
     size_t target_symbol_list_idx = target_symbol_list ? target_symbol_list.dim - 1 : 0;
 
@@ -6260,7 +6263,7 @@ void templateInstanceSemantic(TemplateInstance tempinst, Scope* sc, Expressions*
     sc2.stc &= ~STC.deprecated_;
     tempinst.tryExpandMembers(sc2);
     printf("!!! after expanding %s now ge %d gge %d\n", tempinst.toChars, global.errors, global.gaggedErrors);
-    printf("!!! After my thing ");
+    printf("!!! After my thing\n");
 
     tempinst.semanticRun = PASS.semanticdone;
 
@@ -6499,6 +6502,30 @@ Laftersemantic:
 
         auto ti2 = TemplateInstanceBox(tempinst);
         tempdecl.instances[ti2] = tempinst;
+    }
+    else
+    {
+        if (tempinst.gagged)
+        {
+            // Errors are gagged, so remove the template instance from the
+            // instance/symbol lists we added it to and reset our state to
+            // finish clean and so we can try to instantiate it again later
+            // (see https://issues.dlang.org/show_bug.cgi?id=4302 and https://issues.dlang.org/show_bug.cgi?id=6602).
+            printf("!!! Removing instance %s\n", tempinst.toChars);
+            tempdecl.removeInstance(tempdecl_instance_idx);
+            if (target_symbol_list)
+            {
+                // Because we added 'this' in the last position above, we
+                // should be able to remove it without messing other indices up.
+                assert((*target_symbol_list)[target_symbol_list_idx] == tempinst);
+                target_symbol_list.remove(target_symbol_list_idx);
+                tempinst.memberOf = null;                    // no longer a member
+            }
+            tempinst.semanticRun = PASS.init;
+            tempinst.inst = null;
+            tempinst.symtab = null;
+        }
+
     }
 
     static if (LOG)

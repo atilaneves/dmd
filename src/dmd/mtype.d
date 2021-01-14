@@ -943,15 +943,17 @@ extern (C++) abstract class Type : ASTNode
         auto tcopy = this.syntaxCopy();
 
         const errors = global.startGagging();
-        scope(exit) TemplateInstance.gaggedTemplateInstances = [];
-        printf("    About to call typeSemantic, # of gagged templates is %zu gg is %d\n",
-               TemplateInstance.gaggedTemplateInstances.length, global.gag);
+
+        auto oldGaggedTemplateInstances = TemplateInstance.gaggedTemplateInstances;
+        scope(exit) TemplateInstance.gaggedTemplateInstances = oldGaggedTemplateInstances;
+        TemplateInstance.gaggedTemplateInstances = [];
+
         Type t = typeSemantic(this, loc, sc);
 
         printf("    foreach for %s\n", toChars);
         foreach(i, tempinst; TemplateInstance.gaggedTemplateInstances) {
             printf("    #%zu %s errors? %d\n", i, tempinst.toChars, tempinst.errors);
-            //tempinst.gagged = false;
+            tempinst.gagged = false;
         }
 
         if (global.endGagging(errors) || t.ty == Terror) // if any errors happened
