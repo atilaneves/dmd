@@ -6270,13 +6270,6 @@ void templateInstanceSemantic(TemplateInstance tempinst, Scope* sc, Expressions*
         }
     }
 
-    tempinst.members.foreachDsymbol(
-        (s)
-        {
-            if(s.errors && !global.errors) global.errors = 1;
-        }
-    );
-
     if (global.errors != errorsave)
         goto Laftersemantic;
 
