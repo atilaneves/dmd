@@ -12967,7 +12967,7 @@ Lerr:
  */
 bool checkSharedAccess(Expression e, Scope* sc, bool returnRef = false)
 {
-    if (!global.params.noSharedAccess ||
+    if (global.params.noSharedAccess == FeatureState.disabled ||
         sc.intypeof ||
         sc.flags & SCOPE.ctfe)
     {
@@ -12985,8 +12985,11 @@ bool checkSharedAccess(Expression e, Scope* sc, bool returnRef = false)
     {
         bool sharedError(Expression e)
         {
+            import dmd.errors : previewErrorFunc;
+            const isDeprecated = false;
             // https://dlang.org/phobos/core_atomic.html
-            e.error("direct access to shared `%s` is not allowed, see `core.atomic`", e.toChars());
+            auto errFunc = previewErrorFunc(isDeprecated, global.params.noSharedAccess);
+            errFunc(e.loc, "direct access to shared `%s` is not allowed, see `core.atomic`", e.toChars());
             return true;
         }
 

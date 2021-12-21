@@ -131,7 +131,7 @@ extern (C++) struct Param
     bool useModuleInfo = true;   // generate runtime module information
     bool useTypeInfo = true;     // generate runtime type information
     bool useExceptions = true;   // support exception handling
-    bool noSharedAccess;         // read/write access to shared memory objects
+    FeatureState noSharedAccess;         // read/write access to shared memory objects
     bool previewIn;         // `in` means `[ref] scope const`, accepts rvalues
     bool shortenedMethods; // allow => in normal function declarations
     bool betterC;           // be a "better C" compiler; no dependency on D runtime

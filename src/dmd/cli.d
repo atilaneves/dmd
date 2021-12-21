@@ -836,6 +836,7 @@ dmd -cov -unittest myprog.d
                 "revert DIP1000 changes https://github.com/dlang/DIPs/blob/master/DIPs/other/DIP1000.md (Scoped Pointers)"),
         Feature("intpromote", "fix16997", "revert integral promotions for unary + - ~ operators"),
         Feature("dtorfields", "dtorFields", "don't destruct fields of partially constructed objects"),
+        Feature("nosharedaccess", "noSharedAccess", "disable access to shared memory objects"),
     ];
 
     /// Returns all available previews
