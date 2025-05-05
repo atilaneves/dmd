@@ -192,6 +192,7 @@ extern (C++) struct Param
     // Options for `-preview=/-revert=`
     FeatureState useDIP25 = FeatureState.enabled; // implement https://wiki.dlang.org/DIP25
     FeatureState useDIP1000;     // implement https://dlang.org/spec/memory-safe-d.html#scope-return-params
+    FeatureState useExplicitScope; // DIP1000 checks only if `scope` is used explicitly
     bool ehnogc;                 // use @nogc exception handling
     bool useDIP1021;             // implement https://github.com/dlang/DIPs/blob/master/DIPs/accepted/DIP1021.md
     FeatureState fieldwise;      // do struct equality testing field-wise rather than by memcmp()

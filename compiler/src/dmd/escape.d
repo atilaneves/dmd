@@ -1390,11 +1390,16 @@ private bool checkReturnEscapeImpl(ref Scope sc, Expression e, bool refs, bool g
 private
 bool inferScope(VarDeclaration va)
 {
+    import dmd.globals;
+
     if (!va)
         return false;
-    if (!va.isDataseg() && va.maybeScope && !va.isScope())
+
+    const explicitScope = global.params.useExplicitScope;
+
+    if (!va.isDataseg() && va.maybeScope && !va.isScope() && !explicitScope)
     {
-        //printf("inferring scope for %s\n", va.toChars());
+        // printf("inferring scope for %s\n", va.toChars());
         va.maybeScope = false;
         va.storage_class |= STC.scope_ | STC.scopeinferred;
         return true;

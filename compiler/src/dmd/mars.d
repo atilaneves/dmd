@@ -1237,6 +1237,12 @@ bool parseCommandLine(const ref Strings arguments, const size_t argc, ref Param 
             if (params.useDIP1021)
                 params.useDIP1000 = FeatureState.enabled;    // dip1021 implies dip1000
 
+            if (params.useExplicitScope)
+            {
+                params.useDIP1000 = FeatureState.enabled;
+                params.previewIn = true;
+            }
+
             // copy previously standalone flags from -transition
             // -preview=dip1000 implies -preview=dip25 too
             if (params.useDIP1000 == FeatureState.enabled)
