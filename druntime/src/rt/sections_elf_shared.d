@@ -573,7 +573,9 @@ version (Shared)
             decThreadRef(dep, false);
     }
 
-    extern(C) void* rt_loadLibrary(const char* name)
+public:
+
+    export extern(C) void* rt_loadLibrary(const char* name)
     {
         immutable save = _rtLoading;
         _rtLoading = true;
@@ -588,7 +590,7 @@ version (Shared)
         return handle;
     }
 
-    extern(C) int rt_unloadLibrary(void* handle)
+    export extern(C) int rt_unloadLibrary(void* handle)
     {
         if (handle is null) return false;
 
@@ -601,6 +603,8 @@ version (Shared)
             decThreadRef(pdso, true);
         return .dlclose(handle) == 0;
     }
+
+private:
 }
 
 ///////////////////////////////////////////////////////////////////////////////

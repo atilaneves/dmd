@@ -96,26 +96,28 @@ class Condition
     {
         version (Windows)
         {
-            static if (is(Q == Condition))
+            auto self = cast(Condition) this;
+            alias HANDLE_TYPE = void*;
+            self.m_blockLock = cast(HANDLE_TYPE) CreateSemaphoreA( null, 1, 1, null );
+            if ( self.m_blockLock == self.m_blockLock.init )
+                throw staticError!AssertError("Unable to initialize condition", __FILE__, __LINE__);
+            scope(failure) CloseHandle( cast(void*) self.m_blockLock );
+
+            self.m_blockQueue = cast(HANDLE_TYPE) CreateSemaphoreA( null, 0, int.max, null );
+            if ( self.m_blockQueue == self.m_blockQueue.init )
+                throw staticError!AssertError("Unable to initialize condition", __FILE__, __LINE__);
+            scope(failure) CloseHandle( cast(void*) self.m_blockQueue );
+
+            InitializeCriticalSection( cast(RTL_CRITICAL_SECTION*) &self.m_unblockLock );
+            static if (is(M == shared Mutex))
             {
-                alias HANDLE_TYPE = void*;
+                import core.atomic : atomicLoad;
+                self.m_assocMutex = cast(Mutex) atomicLoad(m);
             }
             else
             {
-                alias HANDLE_TYPE = shared(void*);
+                self.m_assocMutex = m;
             }
-            m_blockLock = cast(HANDLE_TYPE) CreateSemaphoreA( null, 1, 1, null );
-            if ( m_blockLock == m_blockLock.init )
-                throw staticError!AssertError("Unable to initialize condition", __FILE__, __LINE__);
-            scope(failure) CloseHandle( cast(void*) m_blockLock );
-
-            m_blockQueue = cast(HANDLE_TYPE) CreateSemaphoreA( null, 0, int.max, null );
-            if ( m_blockQueue == m_blockQueue.init )
-                throw staticError!AssertError("Unable to initialize condition", __FILE__, __LINE__);
-            scope(failure) CloseHandle( cast(void*) m_blockQueue );
-
-            InitializeCriticalSection( cast(RTL_CRITICAL_SECTION*) &m_unblockLock );
-            m_assocMutex = m;
         }
         else version (Posix)
         {
@@ -419,110 +421,102 @@ private:
         bool timedWait(this Q)( DWORD timeout )
             if (is(Q == Condition) || is(Q == shared Condition))
         {
-            static if (is(Q == Condition))
+            auto op(string o, T, V1)(ref T val, V1 mod)
             {
-                auto op(string o, T, V1)(ref T val, V1 mod)
-                {
-                    return mixin("val " ~ o ~ "mod");
-                }
-            }
-            else
-            {
-                auto op(string o, T, V1)(ref shared T val, V1 mod)
-                {
-                    import core.atomic: atomicOp;
-                    return atomicOp!o(val, mod);
-                }
+                return mixin("val " ~ o ~ "mod");
             }
 
+            // The Windows condition implementation protects these fields with
+            // Win32 synchronization primitives that the compiler cannot model.
+            auto self = cast(Condition) this;
             int   numSignalsLeft;
             int   numWaitersGone;
             DWORD rc;
 
-            rc = WaitForSingleObject( cast(HANDLE) m_blockLock, INFINITE );
+            rc = WaitForSingleObject( cast(HANDLE) self.m_blockLock, INFINITE );
             assert( rc == WAIT_OBJECT_0 );
 
-            op!"+="(m_numWaitersBlocked, 1);
+            op!"+="(self.m_numWaitersBlocked, 1);
 
-            rc = ReleaseSemaphore( cast(HANDLE) m_blockLock, 1, null );
+            rc = ReleaseSemaphore( cast(HANDLE) self.m_blockLock, 1, null );
             assert( rc );
 
-            m_assocMutex.unlock();
-            scope(failure) m_assocMutex.lock();
+            self.m_assocMutex.unlock();
+            scope(failure) self.m_assocMutex.lock();
 
-            rc = WaitForSingleObject( cast(HANDLE) m_blockQueue, timeout );
+            rc = WaitForSingleObject( cast(HANDLE) self.m_blockQueue, timeout );
             assert( rc == WAIT_OBJECT_0 || rc == WAIT_TIMEOUT );
             bool timedOut = (rc == WAIT_TIMEOUT);
 
-            EnterCriticalSection( &m_unblockLock );
-            scope(failure) LeaveCriticalSection( &m_unblockLock );
+            EnterCriticalSection( &self.m_unblockLock );
+            scope(failure) LeaveCriticalSection( &self.m_unblockLock );
 
-            if ( (numSignalsLeft = m_numWaitersToUnblock) != 0 )
+            if ( (numSignalsLeft = self.m_numWaitersToUnblock) != 0 )
             {
                 if ( timedOut )
                 {
                     // timeout (or canceled)
-                    if ( m_numWaitersBlocked != 0 )
+                    if ( self.m_numWaitersBlocked != 0 )
                     {
-                        op!"-="(m_numWaitersBlocked, 1);
+                        op!"-="(self.m_numWaitersBlocked, 1);
                         // do not unblock next waiter below (already unblocked)
                         numSignalsLeft = 0;
                     }
                     else
                     {
                         // spurious wakeup pending!!
-                        m_numWaitersGone = 1;
+                        self.m_numWaitersGone = 1;
                     }
                 }
-                if ( op!"-="(m_numWaitersToUnblock, 1) == 0 )
+                if ( op!"-="(self.m_numWaitersToUnblock, 1) == 0 )
                 {
-                    if ( m_numWaitersBlocked != 0 )
+                    if ( self.m_numWaitersBlocked != 0 )
                     {
                         // open the gate
-                        rc = ReleaseSemaphore( cast(HANDLE) m_blockLock, 1, null );
+                        rc = ReleaseSemaphore( cast(HANDLE) self.m_blockLock, 1, null );
                         assert( rc );
                         // do not open the gate below again
                         numSignalsLeft = 0;
                     }
-                    else if ( (numWaitersGone = m_numWaitersGone) != 0 )
+                    else if ( (numWaitersGone = self.m_numWaitersGone) != 0 )
                     {
-                        m_numWaitersGone = 0;
+                        self.m_numWaitersGone = 0;
                     }
                 }
             }
-            else if ( op!"+="(m_numWaitersGone, 1) == int.max / 2 )
+            else if ( op!"+="(self.m_numWaitersGone, 1) == int.max / 2 )
             {
                 // timeout/canceled or spurious event :-)
-                rc = WaitForSingleObject( cast(HANDLE) m_blockLock, INFINITE );
+                rc = WaitForSingleObject( cast(HANDLE) self.m_blockLock, INFINITE );
                 assert( rc == WAIT_OBJECT_0 );
                 // something is going on here - test of timeouts?
-                op!"-="(m_numWaitersBlocked, m_numWaitersGone);
-                rc = ReleaseSemaphore( cast(HANDLE) m_blockLock, 1, null );
+                op!"-="(self.m_numWaitersBlocked, self.m_numWaitersGone);
+                rc = ReleaseSemaphore( cast(HANDLE) self.m_blockLock, 1, null );
                 assert( rc == WAIT_OBJECT_0 );
-                m_numWaitersGone = 0;
+                self.m_numWaitersGone = 0;
             }
 
-            LeaveCriticalSection( &m_unblockLock );
+            LeaveCriticalSection( &self.m_unblockLock );
 
             if ( numSignalsLeft == 1 )
             {
                 // better now than spurious later (same as ResetEvent)
                 for ( ; numWaitersGone > 0; --numWaitersGone )
                 {
-                    rc = WaitForSingleObject( cast(HANDLE) m_blockQueue, INFINITE );
+                    rc = WaitForSingleObject( cast(HANDLE) self.m_blockQueue, INFINITE );
                     assert( rc == WAIT_OBJECT_0 );
                 }
                 // open the gate
-                rc = ReleaseSemaphore( cast(HANDLE) m_blockLock, 1, null );
+                rc = ReleaseSemaphore( cast(HANDLE) self.m_blockLock, 1, null );
                 assert( rc );
             }
             else if ( numSignalsLeft != 0 )
             {
                 // unblock next waiter
-                rc = ReleaseSemaphore( cast(HANDLE) m_blockQueue, 1, null );
+                rc = ReleaseSemaphore( cast(HANDLE) self.m_blockQueue, 1, null );
                 assert( rc );
             }
-            m_assocMutex.lock();
+            self.m_assocMutex.lock();
             return !timedOut;
         }
 
@@ -530,72 +524,64 @@ private:
         void notify_(this Q)( bool all )
             if (is(Q == Condition) || is(Q == shared Condition))
         {
-            static if (is(Q == Condition))
+            auto op(string o, T, V1)(ref T val, V1 mod)
             {
-                auto op(string o, T, V1)(ref T val, V1 mod)
-                {
-                    return mixin("val " ~ o ~ "mod");
-                }
-            }
-            else
-            {
-                auto op(string o, T, V1)(ref shared T val, V1 mod)
-                {
-                    import core.atomic: atomicOp;
-                    return atomicOp!o(val, mod);
-                }
+                return mixin("val " ~ o ~ "mod");
             }
 
+            // The Windows condition implementation protects these fields with
+            // Win32 synchronization primitives that the compiler cannot model.
+            auto self = cast(Condition) this;
             DWORD rc;
 
-            EnterCriticalSection( &m_unblockLock );
-            scope(failure) LeaveCriticalSection( &m_unblockLock );
+            EnterCriticalSection( &self.m_unblockLock );
+            scope(failure) LeaveCriticalSection( &self.m_unblockLock );
 
-            if ( m_numWaitersToUnblock != 0 )
+            if ( self.m_numWaitersToUnblock != 0 )
             {
-                if ( m_numWaitersBlocked == 0 )
+                if ( self.m_numWaitersBlocked == 0 )
                 {
-                    LeaveCriticalSection( &m_unblockLock );
+                    LeaveCriticalSection( &self.m_unblockLock );
                     return;
                 }
                 if ( all )
                 {
-                    op!"+="(m_numWaitersToUnblock, m_numWaitersBlocked);
-                    m_numWaitersBlocked = 0;
+                    op!"+="(self.m_numWaitersToUnblock, self.m_numWaitersBlocked);
+                    self.m_numWaitersBlocked = 0;
                 }
                 else
                 {
-                    op!"+="(m_numWaitersToUnblock, 1);
-                    op!"-="(m_numWaitersBlocked, 1);
+                    op!"+="(self.m_numWaitersToUnblock, 1);
+                    op!"-="(self.m_numWaitersBlocked, 1);
                 }
-                LeaveCriticalSection( &m_unblockLock );
+                LeaveCriticalSection( &self.m_unblockLock );
             }
-            else if ( m_numWaitersBlocked > m_numWaitersGone )
+            else if ( self.m_numWaitersBlocked > self.m_numWaitersGone )
             {
-                rc = WaitForSingleObject( cast(HANDLE) m_blockLock, INFINITE );
+                rc = WaitForSingleObject( cast(HANDLE) self.m_blockLock, INFINITE );
                 assert( rc == WAIT_OBJECT_0 );
-                if ( 0 != m_numWaitersGone )
+                if ( 0 != self.m_numWaitersGone )
                 {
-                    op!"-="(m_numWaitersBlocked, m_numWaitersGone);
-                    m_numWaitersGone = 0;
+                    op!"-="(self.m_numWaitersBlocked, self.m_numWaitersGone);
+                    self.m_numWaitersGone = 0;
                 }
                 if ( all )
                 {
-                    m_numWaitersToUnblock = m_numWaitersBlocked;
-                    m_numWaitersBlocked = 0;
+                    self.m_numWaitersToUnblock = self.m_numWaitersBlocked;
+                    self.m_numWaitersBlocked = 0;
                 }
                 else
                 {
-                    m_numWaitersToUnblock = 1;
-                    op!"-="(m_numWaitersBlocked, 1);
+                    self.m_numWaitersToUnblock = 1;
+                    op!"-="(self.m_numWaitersBlocked, 1);
                 }
-                LeaveCriticalSection( &m_unblockLock );
-                rc = ReleaseSemaphore( cast(HANDLE) m_blockQueue, 1, null );
+                LeaveCriticalSection( &self.m_unblockLock );
+                rc = ReleaseSemaphore( cast(HANDLE) self.m_blockQueue, 1, null );
                 assert( rc );
             }
             else
             {
-                LeaveCriticalSection( &m_unblockLock );
+                LeaveCriticalSection( &self.m_unblockLock );
             }
         }
 

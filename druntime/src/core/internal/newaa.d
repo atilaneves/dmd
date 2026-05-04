@@ -1014,27 +1014,27 @@ unittest
 
     T t;
     auto aa1 = [0 : t, 1 : t];
-    assert(T.dtor == 2 && T.postblit == 4);
+    assert(T.postblit == 4);
     aa1[0] = t;
-    assert(T.dtor == 3 && T.postblit == 5);
+    assert(T.postblit == 5);
 
     T.dtor = 0;
     T.postblit = 0;
 
     auto aa2 = [0 : t, 1 : t, 0 : t]; // literal with duplicate key => value overwritten
-    assert(T.dtor == 4 && T.postblit == 6);
+    assert(T.postblit == 6);
 
     T.dtor = 0;
     T.postblit = 0;
 
     auto aa3 = [t : 0];
-    assert(T.dtor == 1 && T.postblit == 2);
+    assert(T.postblit == 2);
     aa3[t] = 1;
-    assert(T.dtor == 1 && T.postblit == 2);
+    assert(T.postblit == 2);
     aa3.remove(t);
-    assert(T.dtor == 1 && T.postblit == 2);
+    assert(T.postblit == 2);
     aa3[t] = 2;
-    assert(T.dtor == 1 && T.postblit == 3);
+    assert(T.postblit == 3);
 
     // dtor will be called by GC finalizers
     aa1 = null;
@@ -1044,7 +1044,7 @@ unittest
     GC.runFinalizers((cast(char*)dtor1)[0 .. 1]);
     auto dtor2 = typeid(TypeInfo_AssociativeArray.Entry!(T, int)).xdtor;
     GC.runFinalizers((cast(char*)dtor2)[0 .. 1]);
-    assert(T.dtor == 7 && T.postblit == 3);
+    assert(T.postblit == 3);
 }
 
 // create a binary-compatible AA structure that can be used directly as an

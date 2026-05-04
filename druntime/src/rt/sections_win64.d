@@ -19,6 +19,7 @@ version (DigitalMars) version (Win64) version = hasEHTables;
 // debug = PRINTF;
 
 import core.internal.container.array;
+import core.atomic : atomicLoad, atomicStore;
 import core.memory;
 import core.stdc.stdlib : calloc, free, malloc;
 import core.sys.windows.threadaux;
@@ -120,9 +121,10 @@ void initSections(void* handle) nothrow @nogc
                          cast(ulong)dataSection.length);
 
     import rt.sections;
-    conservative = !scanDataSegPrecisely();
+    auto conservativeScan = !scanDataSegPrecisely();
+    atomicStore(conservative, conservativeScan);
 
-    if (conservative)
+    if (conservativeScan)
     {
         sectionGroup._gcRanges = (cast(void[]*).malloc((void[]).sizeof))[0..1];
         sectionGroup._gcRanges[0] = dataSection;
@@ -214,7 +216,7 @@ version (Shared)
                 void* beg = tlsarray[tls_index];
                 auto size = tlsdir.EndAddressOfRawData - tlsdir.StartAddressOfRawData + tlsdir.SizeOfZeroFill;
 
-                if (conservative)
+                if (atomicLoad(conservative))
                     dg(beg, beg + size);
                 else
                     scanTLSPrecise(cast(uint*)&sec._tpSection[0], cast(uint*)&sec._tpSection[$], beg, dg);
@@ -276,7 +278,7 @@ void finiTLSRanges(void[] rng) nothrow @nogc
 
 void scanTLSRanges(void[] rng, scope void delegate(void* pbeg, void* pend) nothrow dg) nothrow
 {
-    if (conservative)
+    if (atomicLoad(conservative))
         dg(rng.ptr, rng.ptr + rng.length);
     else
         scanTLSPrecise(&_TP_beg, &_TP_end, rng.ptr, dg);

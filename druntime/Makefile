@@ -409,7 +409,7 @@ $(ROOT)/valgrind$(DOTOBJ) : src/etc/valgrind/valgrind.c src/etc/valgrind/valgrin
 
 ######################## Create a shared library ##############################
 
-$(DRUNTIMESO) $(DRUNTIMESOLIB) dll: DFLAGS+=-version=Shared $(SHAREDFLAGS)
+$(DRUNTIMESO) $(DRUNTIMESOLIB) dll: override DFLAGS+=-version=Shared $(SHAREDFLAGS)
 dll: $(DRUNTIMESOLIB)
 dll_so: $(DRUNTIMESO)
 
@@ -472,7 +472,7 @@ else
 UT_DRUNTIME:=$(ROOT)/unittest/libdruntime-ut$(DOTDLL)
 UT_DRUNTIMELIB:=$(ROOT)/unittest/libdruntime-ut$(if $(findstring $(OS),windows),$(DOTLIB),$(DOTDLL))
 
-$(UT_DRUNTIME): UDFLAGS+=-version=Shared $(SHAREDFLAGS)
+$(UT_DRUNTIME): override UDFLAGS+=-version=Shared $(SHAREDFLAGS)
 $(UT_DRUNTIME): $(OBJS) $(SRCS) $(DMD)
 	$(DMD) $(UDFLAGS) -shared $(UTFLAGS) -of$@ $(SRCS) $(OBJS) $(LINKDL) -defaultlib= $(if $(findstring $(OS),windows),user32.lib -L/IMPLIB:$(UT_DRUNTIMELIB),) $(SOLIBS)
 

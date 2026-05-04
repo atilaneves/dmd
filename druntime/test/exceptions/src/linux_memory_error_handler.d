@@ -1,6 +1,11 @@
 import etc.linux.memoryerror;
-import core.atomic : atomicLoad;
-import core.stdc.stdio : fprintf, stderr;
+version (Posix)
+    import core.sys.posix.unistd : write;
+else
+{
+    import core.atomic : atomicLoad;
+    import core.stdc.stdio : fprintf, stderr;
+}
 
 void main()
 {
@@ -40,5 +45,13 @@ void main()
 
         assert(deregisterMemoryErrorHandler());
     }
-    fprintf(atomicLoad(stderr), "success.\n");
+    version (Posix)
+    {
+        // Avoid libc's shared stderr FILE* here: Alpine/musl crashes when this
+        // low-level exception test reaches it through atomicLoad(stderr).
+        enum message = "success.\n";
+        write(2, message.ptr, message.length);
+    }
+    else
+        fprintf(atomicLoad(stderr), "success.\n");
 }

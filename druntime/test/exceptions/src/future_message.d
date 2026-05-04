@@ -1,5 +1,10 @@
-import core.atomic : atomicLoad;
-import core.stdc.stdio : fprintf, stderr;
+version (Posix)
+    import core.sys.posix.unistd : write;
+else
+{
+    import core.atomic : atomicLoad;
+    import core.stdc.stdio : fprintf, stderr;
+}
 
 // Make sure basic stuff works with future Throwable.message
 class NoMessage : Throwable
@@ -57,7 +62,8 @@ void test(Throwable t)
     }
     catch (Throwable e)
     {
-        fprintf(atomicLoad(stderr), "%.*s ", cast(int)e.message.length, e.message.ptr);
+        writeStderr(e.message);
+        writeStderr(" ");
     }
 }
 
@@ -67,5 +73,23 @@ void main()
      test(new WithMessage("exception"));
      test(new WithMessageNoOverride("exception"));
      test(new WithMessageNoOverrideAndDifferentSignature("exception"));
-     fprintf(atomicLoad(stderr), "\n");
+     writeStderr("\n");
+}
+
+void writeStderr(const(char)[] message)
+{
+    version (Posix)
+    {
+        // Avoid libc's shared stderr FILE* here: Alpine/musl crashes when this
+        // low-level exception test reaches it through atomicLoad(stderr).
+        while (message.length)
+        {
+            const written = write(2, message.ptr, message.length);
+            if (written <= 0)
+                return;
+            message = message[written .. $];
+        }
+    }
+    else
+        fprintf(atomicLoad(stderr), "%.*s", cast(int) message.length, message.ptr);
 }

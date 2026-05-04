@@ -1068,7 +1068,7 @@ version (CoreUnittest)
         }
     }
 
-    @betterC pure nothrow @nogc @safe unittest
+    @betterC pure nothrow @nogc @system unittest
     {
         int a;
         if (casWeak!(MemoryOrder.acq_rel, MemoryOrder.raw)(&a, 0, 4))

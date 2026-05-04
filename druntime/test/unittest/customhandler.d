@@ -16,7 +16,6 @@ shared static this()
 
 void main()
 {
-    import core.atomic : atomicLoad;
-    import core.stdc.stdio : fprintf, stderr;
-    fprintf(atomicLoad(stderr), "main\n");
+    import core.stdc.stdio : printf;
+    printf("main\n");
 }
