@@ -788,6 +788,7 @@ const(ubyte)[] toUbyte(T)(const ref T val) if (is(T == delegate) || is(T : V*, V
 private const(ubyte)[] toUbyte_aggregate_ctfe(T)(const return ref scope T val)
 {
     pragma(inline, false);
+    assert(__ctfe);
 
     // Walking `tupleof` on a shared aggregate is rejected by
     // `-preview=nosharedaccess`.
