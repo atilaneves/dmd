@@ -562,7 +562,7 @@ class Parser(AST, Lexer = dmd.lexer.Lexer) : Lexer
                     int braces = 0;
                     while (1)
                     {
-                        nextToken();
+                        nextTokenInSkippedBlock();
                         switch (token.value)
                         {
                         case TOK.leftCurly:

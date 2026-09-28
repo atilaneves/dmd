@@ -300,6 +300,100 @@ class Lexer
         return token.value;
     }
 
+    /**************************************
+     * Advance while skipping a D block whose contents will not be parsed.
+     * Braces and end of file are returned normally. Other tokens may be
+     * skipped, without constructing their values or interning identifiers.
+     * Literals, comments, directives and non-ASCII text still pass through
+     * the ordinary lexer so that lexical errors and source locations are
+     * preserved. Buffered lookahead must be consumed before scanning ahead.
+     */
+    final TOK nextTokenInSkippedBlock()
+    {
+        if (token.next || Ccompile || tokenizeNewlines)
+            return nextToken();
+
+        while (true)
+        {
+            const c = *p;
+            switch (c)
+            {
+            case ' ':
+            case '\t':
+            case '\v':
+            case '\f':
+                ++p;
+                continue;
+
+            case '\r':
+                ++p;
+                if (*p != '\n')
+                    endOfLine();
+                continue;
+
+            case '\n':
+                ++p;
+                endOfLine();
+                continue;
+
+            case '(':
+            case ')':
+            case '[':
+            case ']':
+            case '?':
+            case ',':
+            case ';':
+            case ':':
+            case '$':
+            case '@':
+            case '*':
+            case '%':
+            case '&':
+            case '|':
+            case '-':
+            case '+':
+            case '<':
+            case '>':
+            case '!':
+            case '=':
+            case '~':
+            case '^':
+                // None of these D operators can hide a brace or cause a
+                // lexical diagnostic. Their precise token values are unused.
+                ++p;
+                token.value = TOK.semicolon;
+                continue;
+
+            case 'a': .. case 'z':
+            case 'A': .. case 'Z':
+            case '_':
+                // String prefixes must be interpreted by the full lexer.
+                if ((c == 'r' || c == 'x') && p[1] == '"' ||
+                    c == 'q' && (p[1] == '"' || p[1] == '{') ||
+                    c == 'i' && (p[1] == '"' || p[1] == '`' ||
+                                p[1] == 'q' && p[2] == '{'))
+                    return nextToken();
+
+                auto q = p + 1;
+                while (isidchar(*q))
+                    ++q;
+
+                // Unicode continuations need validation, and __EOF__ changes
+                // where the file ends, even in an otherwise discarded body.
+                if (*q & 0x80 || c == '_' && q - p == 7 && p[0 .. 7] == "__EOF__")
+                    return nextToken();
+
+                p = q;
+                anyToken = true;
+                token.value = TOK.identifier;
+                continue;
+
+            default:
+                return nextToken();
+            }
+        }
+    }
+
     /***********************
      * Look ahead at next token's value.
      */
