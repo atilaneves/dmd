@@ -404,7 +404,6 @@ class Lexer
     }
 
     /// Skip a run of spaces, 4 bytes at a time once `p` is 4-byte aligned.
-    pragma(inline, true)
     private void skipSpaces()
     {
         while ((cast(size_t)p) % uint.sizeof)
