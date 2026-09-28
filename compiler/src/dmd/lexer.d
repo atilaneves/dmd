@@ -300,6 +300,124 @@ class Lexer
         return token.value;
     }
 
+    /**************************************
+     * Advance while skipping a D block whose contents will not be parsed.
+     * Braces and end of file are returned normally. Other tokens may be
+     * skipped, without constructing their values or interning identifiers.
+     * Literals, comments, directives and non-ASCII text still pass through
+     * the ordinary lexer so that lexical errors and source locations are
+     * preserved. Buffered lookahead must be consumed before scanning ahead.
+     */
+    final TOK nextTokenInSkippedBlock()
+    {
+        if (token.next || Ccompile || tokenizeNewlines)
+            return nextToken();
+        version (DMDLIB)
+        {
+            if (whitespaceToken)
+                return nextToken();
+        }
+
+        while (true)
+        {
+            const c = *p;
+            switch (c)
+            {
+            case ' ':
+                skipSpaces();
+                continue;
+
+            case '\t':
+            case '\v':
+            case '\f':
+                ++p;
+                continue;
+
+            case '\r':
+                ++p;
+                if (*p != '\n')
+                    endOfLine();
+                continue;
+
+            case '\n':
+                ++p;
+                endOfLine();
+                continue;
+
+            // Single-character D operators that can neither hide a brace nor
+            // produce a lexical diagnostic. Deliberately absent, and so left to
+            // `nextToken()`: `/` (comments), `.` (`.5` float literals),
+            // `#` (special token sequences), quotes and backtick (strings),
+            // digits (numeric literals) and `{`/`}` (counted by the caller).
+            case '(':
+            case ')':
+            case '[':
+            case ']':
+            case '?':
+            case ',':
+            case ';':
+            case ':':
+            case '$':
+            case '@':
+            case '*':
+            case '%':
+            case '&':
+            case '|':
+            case '-':
+            case '+':
+            case '<':
+            case '>':
+            case '!':
+            case '=':
+            case '~':
+            case '^':
+                ++p;
+                continue;
+
+            case 'a': .. case 'z':
+            case 'A': .. case 'Z':
+            case '_':
+                // String prefixes must be interpreted by the full lexer.
+                // Keep in sync with the prefix cases in `scan()`.
+                if ((c == 'r' || c == 'x') && p[1] == '"' ||
+                    c == 'q' && (p[1] == '"' || p[1] == '{') ||
+                    c == 'i' && (p[1] == '"' || p[1] == '`' ||
+                                p[1] == 'q' && p[2] == '{'))
+                    return nextToken();
+
+                auto q = p + 1;
+                while (isidchar(*q))
+                    ++q;
+
+                // Unicode continuations need validation, and __EOF__ changes
+                // where the file ends, even in an otherwise discarded body.
+                if (*q & 0x80 || c == '_' && q - p == 7 && p[0 .. 7] == "__EOF__")
+                    return nextToken();
+
+                p = q;
+                continue;
+
+            default:
+                return nextToken();
+            }
+        }
+    }
+
+    /// Skip a run of spaces, 4 bytes at a time once `p` is 4-byte aligned.
+    private void skipSpaces()
+    {
+        while ((cast(size_t)p) % uint.sizeof)
+        {
+            if (*p != ' ')
+                return;
+            p++;
+        }
+        while (*(cast(uint*)p) == 0x20202020) // ' ' == 0x20
+            p += 4;
+        while (*p == ' ')
+            p++;
+    }
+
     /***********************
      * Look ahead at next token's value.
      */
@@ -343,19 +461,7 @@ class Lexer
                 // Intentionally not advancing `p`, such that subsequent calls keep returning TOK.endOfFile.
                 return;
             case ' ':
-                // Skip 4 spaces at a time after aligning 'p' to a 4-byte boundary.
-                while ((cast(size_t)p) % uint.sizeof)
-                {
-                    if (*p != ' ')
-                        goto LendSkipFourSpaces;
-                    p++;
-                }
-                while (*(cast(uint*)p) == 0x20202020) // ' ' == 0x20
-                    p += 4;
-                // Skip over any remaining space on the line.
-                while (*p == ' ')
-                    p++;
-            LendSkipFourSpaces:
+                skipSpaces();
                 version (DMDLIB)
                 {
                     if (whitespaceToken)
@@ -516,6 +622,8 @@ class Lexer
                 }
                 goto case_ident;
 
+            // The D string prefixes below (r" x" q" q{ i" i` iq{)
+            // are also recognised by `nextTokenInSkippedBlock`; update both together.
             case 'r':
                 if (Ccompile || p[1] != '"')
                     goto case_ident;
