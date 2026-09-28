@@ -312,6 +312,11 @@ class Lexer
     {
         if (token.next || Ccompile || tokenizeNewlines)
             return nextToken();
+        version (DMDLIB)
+        {
+            if (whitespaceToken)
+                return nextToken();
+        }
 
         while (true)
         {
@@ -319,6 +324,9 @@ class Lexer
             switch (c)
             {
             case ' ':
+                skipSpaces();
+                continue;
+
             case '\t':
             case '\v':
             case '\f':
@@ -336,6 +344,11 @@ class Lexer
                 endOfLine();
                 continue;
 
+            // Single-character D operators that can neither hide a brace nor
+            // produce a lexical diagnostic. Deliberately absent, and so left to
+            // `nextToken()`: `/` (comments), `.` (`.5` float literals),
+            // `#` (special token sequences), quotes and backtick (strings),
+            // digits (numeric literals) and `{`/`}` (counted by the caller).
             case '(':
             case ')':
             case '[':
@@ -358,16 +371,14 @@ class Lexer
             case '=':
             case '~':
             case '^':
-                // None of these D operators can hide a brace or cause a
-                // lexical diagnostic. Their precise token values are unused.
                 ++p;
-                token.value = TOK.semicolon;
                 continue;
 
             case 'a': .. case 'z':
             case 'A': .. case 'Z':
             case '_':
                 // String prefixes must be interpreted by the full lexer.
+                // Keep in sync with the prefix cases in `scan()`.
                 if ((c == 'r' || c == 'x') && p[1] == '"' ||
                     c == 'q' && (p[1] == '"' || p[1] == '{') ||
                     c == 'i' && (p[1] == '"' || p[1] == '`' ||
@@ -384,14 +395,28 @@ class Lexer
                     return nextToken();
 
                 p = q;
-                anyToken = true;
-                token.value = TOK.identifier;
                 continue;
 
             default:
                 return nextToken();
             }
         }
+    }
+
+    /// Skip a run of spaces, 4 bytes at a time once `p` is 4-byte aligned.
+    pragma(inline, true)
+    private void skipSpaces()
+    {
+        while ((cast(size_t)p) % uint.sizeof)
+        {
+            if (*p != ' ')
+                return;
+            p++;
+        }
+        while (*(cast(uint*)p) == 0x20202020) // ' ' == 0x20
+            p += 4;
+        while (*p == ' ')
+            p++;
     }
 
     /***********************
@@ -437,19 +462,7 @@ class Lexer
                 // Intentionally not advancing `p`, such that subsequent calls keep returning TOK.endOfFile.
                 return;
             case ' ':
-                // Skip 4 spaces at a time after aligning 'p' to a 4-byte boundary.
-                while ((cast(size_t)p) % uint.sizeof)
-                {
-                    if (*p != ' ')
-                        goto LendSkipFourSpaces;
-                    p++;
-                }
-                while (*(cast(uint*)p) == 0x20202020) // ' ' == 0x20
-                    p += 4;
-                // Skip over any remaining space on the line.
-                while (*p == ' ')
-                    p++;
-            LendSkipFourSpaces:
+                skipSpaces();
                 version (DMDLIB)
                 {
                     if (whitespaceToken)
@@ -610,6 +623,8 @@ class Lexer
                 }
                 goto case_ident;
 
+            // The D string prefixes below (r" x" q" q{ i" i` iq{)
+            // are also recognised by `nextTokenInSkippedBlock`; update both together.
             case 'r':
                 if (Ccompile || p[1] != '"')
                     goto case_ident;
