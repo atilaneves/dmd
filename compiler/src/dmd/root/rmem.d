@@ -130,6 +130,16 @@ extern (C++) struct Mem
     static void disableGC() nothrow @nogc
     {
         _isGCEnabled = false;
+
+        version (HugePages) version (CRuntime_Glibc)
+        {
+            /* Grow the malloc heap in large steps, so that the kernel can back
+             * it with transparent huge pages instead of faulting in 4KB pages.
+             * Memory is hardly ever freed when the GC is disabled, so there is
+             * little cost to it.
+             */
+            mallopt(M_TOP_PAD, 64 * 1024 * 1024);
+        }
     }
 
     static void addRange(const(void)* p, size_t size) nothrow @nogc
@@ -147,13 +157,53 @@ extern (C++) struct Mem
 
 extern (C++) const __gshared Mem mem;
 
-enum CHUNK_SIZE = (256 * 4096 - 64);
+/* On 64-bit Linux, get the bump allocator's memory from large 2MB-aligned
+ * mappings the kernel can back with transparent huge pages. With 1MB chunks
+ * from malloc, every 4KB page costs a page fault on first touch, which is
+ * a significant fraction of the total compile time for large imports.
+ * Untouched parts of a chunk cost nothing but address space.
+ */
+version (linux) version (D_LP64)
+    version = HugePages;
+
+version (HugePages)
+{
+    import core.sys.linux.sys.mman;
+
+    enum CHUNK_SIZE = 64 * 1024 * 1024;
+    private enum HUGE_PAGE_SIZE = 2 * 1024 * 1024;
+
+    version (CRuntime_Glibc)
+    {
+        private enum M_TOP_PAD = -2;
+        private extern (C) int mallopt(int param, int value) nothrow @nogc;
+    }
+}
+else
+    enum CHUNK_SIZE = (256 * 4096 - 64);
 
 enum DEFAULT_ALIGNMENT = 16;
 
 __gshared size_t heappos = CHUNK_SIZE;
 __gshared void* heapp;
-__gshared size_t heapTotal = 0; // Total amount of memory allocated using malloc
+__gshared size_t heapTotal = 0; // Total amount of memory allocated for the bump allocator
+
+private void* allocChunk() nothrow @nogc
+{
+    version (HugePages)
+    {
+        // over-allocate so the chunk can be aligned to a huge page boundary
+        void* p = mmap(null, CHUNK_SIZE + HUGE_PAGE_SIZE, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+        if (p == MAP_FAILED)
+            return Mem.check(null);
+        p = cast(void*) ((cast(size_t) p + HUGE_PAGE_SIZE - 1) & ~(HUGE_PAGE_SIZE - 1));
+        madvise(p, CHUNK_SIZE, MADV_HUGEPAGE); // failure only means no huge pages
+        return p;
+    }
+    else
+        return Mem.check(malloc(CHUNK_SIZE));
+}
 
 private void* _allocmemoryNoFree(size_t m_size, size_t alignment) nothrow @nogc
 {
@@ -171,7 +221,7 @@ private void* _allocmemoryNoFree(size_t m_size, size_t alignment) nothrow @nogc
         return Mem.check(malloc(m_size));
     }
 
-    heapp = Mem.check(malloc(CHUNK_SIZE));
+    heapp = allocChunk();
     heapTotal += CHUNK_SIZE;
     heappos = m_size;
     return heapp;
