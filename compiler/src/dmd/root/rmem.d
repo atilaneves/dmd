@@ -20,6 +20,18 @@ import core.memory : GC;
 
 nothrow:
 
+/* On x86-64 Linux, get the bump allocator's memory from large 2MB-aligned
+ * mappings the kernel can back with transparent huge pages. With 1MB chunks
+ * from malloc, every 4KB page costs a page fault on first touch, which is
+ * a significant fraction of the total compile time for large imports.
+ * Untouched parts consume address space. With strict overcommit accounting
+ * (vm.overcommit_memory=2), the full mapping also counts against commit limits.
+ * The fixed 2MB alignment matches x86-64 PMD huge pages. Other architectures
+ * can require different alignment, so they retain the malloc path.
+ */
+version (linux) version (X86_64)
+    version = HugePages;
+
 extern (C++) struct Mem
 {
     static char* xstrdup(const(char)* s) nothrow
@@ -130,6 +142,17 @@ extern (C++) struct Mem
     static void disableGC() nothrow @nogc
     {
         _isGCEnabled = false;
+
+        version (HugePages) version (CRuntime_Glibc)
+        {
+            /* Grow the malloc heap in large steps, so that the kernel can back
+             * it with transparent huge pages instead of faulting in 4KB pages.
+             * The no-GC path retains most allocations. This process-wide
+             * setting also affects backend allocations and disables glibc's
+             * adaptive mmap threshold.
+             */
+            mallopt(M_TOP_PAD, 64 * 1024 * 1024);
+        }
     }
 
     static void addRange(const(void)* p, size_t size) nothrow @nogc
@@ -147,19 +170,96 @@ extern (C++) struct Mem
 
 extern (C++) const __gshared Mem mem;
 
-enum CHUNK_SIZE = (256 * 4096 - 64);
+version (HugePages)
+{
+    import core.sys.linux.sys.mman;
+
+    // Older bootstrap druntime declarations omit @nogc for this libc call.
+    private extern (C) int madvise(void* addr, size_t length, int advice) nothrow @nogc;
+
+    // Requests below 64MB use bump chunks. If a request does not fit, the
+    // unused tail of the previous chunk is never reused. It retains address
+    // space; physical memory use depends on which pages, including huge
+    // pages, were touched. Commit accounting depends on overcommit policy.
+    enum CHUNK_SIZE = 64 * 1024 * 1024;
+    private enum HUGE_PAGE_SIZE = 2 * 1024 * 1024;
+
+    version (CRuntime_Glibc)
+    {
+        private enum M_TOP_PAD = -2;
+        private extern (C) int mallopt(int param, int value) nothrow @nogc;
+    }
+}
+else
+    enum CHUNK_SIZE = (256 * 4096 - 64);
 
 enum DEFAULT_ALIGNMENT = 16;
 
 __gshared size_t heappos = CHUNK_SIZE;
+private __gshared size_t heapCapacity = CHUNK_SIZE;
 __gshared void* heapp;
-__gshared size_t heapTotal = 0; // Total amount of memory allocated using malloc
+// Sum of usable chunk capacities and direct allocation sizes. This excludes
+// alignment slack outside chunks and does not measure committed or resident memory.
+__gshared size_t heapTotal = 0;
+
+version (HugePages)
+{
+    // Set once the huge-page mmap fails. Address-space limits do not go
+    // away during a compile, so every later chunk goes straight to the
+    // malloc fallback instead of repeating a doomed mmap call.
+    private __gshared bool hugePageMmapFailed = false;
+}
+
+/**
+ * Returns: the portion of `heapTotal` that has actually been handed out to
+ * callers, i.e. `heapTotal` minus the unused tail of the current chunk.
+ * This does not account for the unused tails of earlier, abandoned chunks.
+ * Before the first chunk is allocated (`heapp` is null and `heappos ==
+ * heapCapacity`), this is 0.
+ */
+size_t heapMemoryInUse() nothrow @nogc
+{
+    return heapTotal - (heapCapacity - heappos);
+}
+
+private void* allocChunk(size_t minSize, out size_t capacity) nothrow @nogc
+{
+    capacity = CHUNK_SIZE;
+    version (HugePages)
+    {
+        enum SMALL_CHUNK_SIZE = 256 * 4096 - 64;
+        if (!hugePageMmapFailed)
+        {
+            // over-allocate so the chunk can be aligned to a huge page boundary
+            void* p = mmap(null, CHUNK_SIZE + HUGE_PAGE_SIZE, PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+            if (p != MAP_FAILED)
+            {
+                // Keep the head and tail alignment slack mapped and untouched
+                // to avoid munmap bookkeeping. Commit accounting still
+                // depends on policy.
+                p = cast(void*) ((cast(size_t) p + HUGE_PAGE_SIZE - 1) & ~(HUGE_PAGE_SIZE - 1));
+                madvise(p, CHUNK_SIZE, MADV_HUGEPAGE); // failure only means no huge pages
+                return p;
+            }
+            // Remember the failure for the life of the process: address-space
+            // limits do not go away, so later chunks skip straight to malloc
+            // instead of repeating a doomed mmap call.
+            hugePageMmapFailed = true;
+        }
+        // Keep small allocations possible under address-space limits.
+        capacity = minSize > SMALL_CHUNK_SIZE ? minSize : SMALL_CHUNK_SIZE;
+        return Mem.check(malloc(capacity));
+    }
+    else
+        return Mem.check(malloc(CHUNK_SIZE));
+}
 
 private void* _allocmemoryNoFree(size_t m_size, size_t alignment) nothrow @nogc
 {
     size_t pos = (heappos + alignment - 1) & -alignment;
     // The layout of the code is selected so the most common case is straight through
-    if (pos + m_size <= CHUNK_SIZE)
+    if (pos + m_size <= heapCapacity)
     {
         heappos = pos + m_size;
         return heapp + pos;
@@ -171,8 +271,8 @@ private void* _allocmemoryNoFree(size_t m_size, size_t alignment) nothrow @nogc
         return Mem.check(malloc(m_size));
     }
 
-    heapp = Mem.check(malloc(CHUNK_SIZE));
-    heapTotal += CHUNK_SIZE;
+    heapp = allocChunk(m_size, heapCapacity);
+    heapTotal += heapCapacity;
     heappos = m_size;
     return heapp;
 }
