@@ -156,13 +156,19 @@ struct OutBuffer
     Params:
     nbytes = the number of additional bytes to reserve
     */
-    extern (C++) void reserve(size_t nbytes) pure nothrow @nogc @trusted
+    extern (C++) pragma(inline, true) void reserve(size_t nbytes) pure nothrow @nogc @trusted
     {
         //debug (stomp) printf("OutBuffer::reserve: size = %lld, offset = %lld, nbytes = %lld\n", data.length, offset, nbytes);
         const minSize = offset + nbytes;
-        if (data.length >= minSize)
-            return;
+        if (data.length < minSize)
+            growReserve(nbytes, minSize);
+    }
 
+    // Cold path of `reserve`: actually grow `data`. Split out so the
+    // common (no-op) case in `reserve` is small enough to be inlined
+    // at call sites like `writeByte`.
+    private extern (C++) void growReserve(size_t nbytes, size_t minSize) pure nothrow @nogc @trusted
+    {
         /* Increase by factor of 1.5; round up to 16 bytes.
             * The odd formulation is so it will map onto single x86 LEA instruction.
             */
@@ -412,7 +418,7 @@ struct OutBuffer
         this.data[offset++] = b;
     }
 
-    extern (C++) void writeByte(ubyte b) pure nothrow @nogc @safe
+    extern (C++) pragma(inline, true) void writeByte(ubyte b) pure nothrow @nogc @safe
     {
         if (doindent && !notlinehead && b != '\n')
             indent();
