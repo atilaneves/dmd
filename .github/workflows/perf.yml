@@ -35,9 +35,11 @@ jobs:
 
       - name: Fetch compiler version tags
         # Fork tags can be stale; git describe sets the compiler's __VERSION__.
+        # The '+' forces an update, since a stale local tag would otherwise
+        # make the fetch fail instead of moving it to the upstream commit.
         run: >-
           git fetch --no-tags https://github.com/dlang/dmd.git
-          'refs/tags/v*:refs/tags/v*'
+          '+refs/tags/v*:refs/tags/v*'
 
       - name: Set parallelism
         run: echo "N=$(nproc)" >> "$GITHUB_ENV"
