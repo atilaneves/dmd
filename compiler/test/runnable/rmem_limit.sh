@@ -98,6 +98,14 @@ $DMD -I../src "${OUTPUT_BASE}.d" ../src/dmd/root/rmem.d \
     "${OUTPUT_BASE}${EXE}"
 )
 
+# The huge-page mmap path (dmd.root.rmem's HugePages version) is only
+# built on x86-64 Linux; on any other 64-bit Linux architecture (e.g.
+# AArch64), allocmemoryNoFree always uses the malloc fallback and makes
+# no large mmap call at all, so the count below would be 0, not 1. The
+# test runner exposes MODEL (32/64) and OS, but not the CPU
+# architecture, so ask uname directly.
+if [ "$(uname -m)" = "x86_64" ]; then
+
 # After the first mmap failure, later chunks must go straight to the malloc
 # fallback: count the large (>= 64MB) mmap attempts the process makes by
 # interposing the libc symbol the huge-page path actually calls. glibc
@@ -152,3 +160,5 @@ $DMD -I../src "${OUTPUT_BASE}.d" ../src/dmd/root/rmem.d \
     ulimit -v 65536
     "${OUTPUT_BASE}${EXE}"
 )
+
+fi
