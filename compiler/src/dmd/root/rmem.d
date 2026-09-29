@@ -202,6 +202,18 @@ __gshared void* heapp;
 // alignment slack outside chunks and does not measure committed or resident memory.
 __gshared size_t heapTotal = 0;
 
+/**
+ * Returns: the portion of `heapTotal` that has actually been handed out to
+ * callers, i.e. `heapTotal` minus the unused tail of the current chunk.
+ * This does not account for the unused tails of earlier, abandoned chunks.
+ * Before the first chunk is allocated (`heapp` is null and `heappos ==
+ * heapCapacity`), this is 0.
+ */
+size_t heapMemoryInUse() nothrow @nogc
+{
+    return heapTotal - (heapCapacity - heappos);
+}
+
 private void* allocChunk(size_t minSize, out size_t capacity) nothrow @nogc
 {
     capacity = CHUNK_SIZE;
