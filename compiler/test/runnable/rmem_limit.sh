@@ -108,10 +108,14 @@ if [ "$(uname -m)" = "x86_64" ]; then
 
 # After the first mmap failure, later chunks must go straight to the malloc
 # fallback: count the large (>= 64MB) mmap attempts the process makes by
-# interposing the libc symbol the huge-page path actually calls. glibc
-# aliases the "mmap" the D binding calls to "mmap64" on this platform, so
-# that is the symbol to interpose (confirmed by objdump on the compiled call
-# site); interposing "mmap" alone would silently count nothing.
+# interposing the libc symbol the huge-page path actually calls. Which C
+# symbol that is depends on the C runtime: glibc's D "mmap" binding aliases
+# to the C symbol "mmap64", while musl's D "mmap" binds directly to the C
+# symbol "mmap" (its "mmap64" is only a D-side alias; musl 1.2.4+ exports no
+# "mmap64" symbol at all). Interpose both "mmap" and "mmap64", each
+# forwarding to its own real symbol, so the count is correct on either C
+# runtime; on a C runtime lacking one of the two symbols, dlsym for it
+# returns null and that interposer is simply never called.
 cat > "${OUTPUT_BASE}.d" <<'EOF'
 module rmem_limit;
 
@@ -123,7 +127,22 @@ private extern (C) alias MmapFn =
     void* function(void*, size_t, int, int, int, long) nothrow @nogc;
 
 __gshared int largeMmapCount = 0;
+__gshared MmapFn realMmap;
 __gshared MmapFn realMmap64;
+
+// glibc and musl each export "mmap" and "mmap64" as separate entry points
+// (when they exist at all); these two interposers must not call each
+// other, or a single call made through one of the two names would be
+// counted, and forwarded, twice.
+extern (C) void* mmap(void* addr, size_t length, int prot, int flags,
+                      int fd, long offset) nothrow @nogc
+{
+    if (length >= 64 * 1024 * 1024)
+        largeMmapCount++;
+    if (realMmap is null)
+        realMmap = cast(MmapFn) dlsym(RTLD_NEXT, "mmap");
+    return realMmap(addr, length, prot, flags, fd, offset);
+}
 
 extern (C) void* mmap64(void* addr, size_t length, int prot, int flags,
                         int fd, long offset) nothrow @nogc
