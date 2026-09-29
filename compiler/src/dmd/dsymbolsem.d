@@ -7840,6 +7840,42 @@ private extern(C++) class SearchVisitor : Visitor
             return setResult(null);
 
         //printf(" look in imports\n");
+        /* Memo cache for this loop -- see ScopeDsymbol.importSearchCache and
+         * importSearchGeneration's doc comments (dsymbol.d) for the
+         * invalidation side. `flags` fits in a byte (see SearchOpt), so pack
+         * it with the Identifier pointer into a single size_t key; every flag
+         * that can change the outcome of the walk below is part of `flags`,
+         * so it must all be in the key.
+         *
+         * The cache is only valid for the generation it was last written
+         * under: if the global counter has moved on since, some symbol table
+         * somewhere grew (or importScope() was called) and this ScopeDsymbol's
+         * entries can no longer be trusted, so drop them outright.
+         */
+        if (sds.importSearchCacheGeneration != importSearchGeneration)
+        {
+            sds.importSearchCache = null;
+            sds.importSearchCacheGeneration = importSearchGeneration;
+        }
+        const cacheKey = (cast(size_t)cast(void*)ident << 8) | (flags & 0xFF);
+        if (auto hit = cacheKey in sds.importSearchCache)
+        {
+            return setResult(*hit);
+        }
+        // Only cache the result if it was computed without side effects (no error or
+        // deprecation message printed along the way, e.g. from an ambiguity, a
+        // forward reference, or a deprecated symbol warning nested arbitrarily deep
+        // in the recursive ss.search() calls below), and without any symbol table
+        // anywhere growing (or an importScope() call happening) while we computed
+        // it -- otherwise a cache hit would silently skip reproducing those
+        // messages, or return an answer that a fresh walk would no longer give,
+        // on a later, identical lookup. See also insearchCutCount below: a
+        // circular-import recursion guard can produce an incomplete-but-non-null
+        // answer without any symbol table actually changing.
+        const errorsBefore = global.errors;
+        const warningsBefore = global.warnings;
+        const generationBefore = importSearchGeneration;
+        const insearchCutCountBefore = insearchCutCount;
         Dsymbol s = null;
         OverloadSet a = null;
         // Look in imported modules
@@ -7966,9 +8002,34 @@ private extern(C++) class SearchVisitor : Visitor
                 s = a;
             }
             //printf("\tfound in imports %s.%s\n", toChars(), s.toChars());
+            if (errorsBefore == global.errors && warningsBefore == global.warnings
+                && generationBefore == importSearchGeneration
+                && insearchCutCountBefore == insearchCutCount)
+            {
+                // Nothing observable changed while we computed `s`: no symbol
+                // table grew (or importScope() ran) anywhere, no error/
+                // deprecation was printed, and no circular-import search got
+                // cut short along the way. sds.importSearchCacheGeneration was
+                // already stamped to the current generation at the top of this
+                // function (and the generation hasn't moved since), so it's
+                // still accurate here.
+                sds.importSearchCache[cacheKey] = s;
+            }
             return setResult(s);
         }
         //printf(" not found in imports\n");
+        /* Deliberately NOT cached, even though importSearchGeneration would
+         * correctly invalidate a stale "not found" the moment any relevant
+         * symbol table grows: the `insearch` recursion guard in
+         * Module.search() below can make this walk return null for a module
+         * that *already contains* the symbol, without inserting anything
+         * anywhere -- there is nothing for the generation counter to bump.
+         * (That specific case is also excluded from the "found" path above
+         * via insearchCutCount, but leaving negative results uncached
+         * entirely is simpler and removes an entire class of "did we account
+         * for everything that can make a miss stop being a miss" bugs for a
+         * cost that is just a repeated walk, not a wrong answer.)
+         */
         return setResult(null);
     }
 
@@ -8268,7 +8329,13 @@ private extern(C++) class SearchVisitor : Visitor
          */
         //printf("%s Module.search('%s', flags = x%x) insearch = %d\n", m.toChars(), ident.toChars(), flags, m.insearch);
         if (m.insearch)
+        {
+            // This is a "don't know yet" cop-out, not a fact that `ident` is
+            // absent from `m` -- see insearchCutCount's doc comment
+            // (dsymbol.d) and its use in visit(ScopeDsymbol) above.
+            insearchCutCount++;
             return setResult(null);
+        }
 
         /* Qualified module searches always search their imports,
          * even if SearchLocalsOnly

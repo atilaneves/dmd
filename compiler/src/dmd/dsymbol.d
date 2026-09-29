@@ -1094,6 +1094,44 @@ extern (C++) class Dsymbol : ASTNode
     inout(CAsmDeclaration)             isCAsmDeclaration()             inout { return dsym == DSYM.cAsmDeclaration ? cast(inout(CAsmDeclaration)) cast(void*) this : null; }
 }
 
+/* Global generation counter for ScopeDsymbol.importSearchCache (see below).
+ *
+ * The import-walk result for a given (ScopeDsymbol, Identifier, flags) does
+ * not only depend on that ScopeDsymbol's *own* importedScopes/visibilities:
+ * it depends on the full, recursively-searched contents of every scope
+ * reachable through them. A symbol table insertion into *any* of those
+ * reachable scopes -- e.g. a module gaining a member via a `static if`,
+ * template mixin, or ImportC forward-declaration completion that runs
+ * lazily during semantic, possibly triggered *from inside* a nested
+ * `search()` call itself (see StructDeclaration/ClassDeclaration/
+ * EnumDeclaration.search(), which call dsymbolSemantic() on demand) --
+ * can change the answer for an already-cached lookup, including turning a
+ * cached unambiguous hit into what should now be an ambiguity error or a
+ * bigger OverloadSet. There is no cheap way to know in advance which
+ * ScopeDsymbols are transitively reachable from a given search, so instead
+ * every DsymbolTable insertion/update anywhere (the only way a symbol
+ * table's contents ever change -- see DsymbolTable.insert/update below)
+ * bumps this single counter. Each ScopeDsymbol's cache remembers the
+ * generation it was populated at (importSearchCacheGeneration) and is
+ * dropped, lazily, the next time it is consulted and the generation no
+ * longer matches. This is deliberately coarse (a global fence, not a
+ * precise dependency graph) in exchange for being trivially exhaustive and
+ * unable to miss an invalidation, per-object dependency tracking would be
+ * far more precise but is not worth the complexity/risk here.
+ */
+__gshared size_t importSearchGeneration = 1;
+
+/* Companion counter: bumped whenever Module.search's `insearch` recursion
+ * guard (dsymbolsem.d) truncates a circular-import search and returns null
+ * *without* the module's contents actually having changed. That case is a
+ * "we don't know the real answer yet" cop-out, not a "nothing changed"
+ * fact, so it cannot be represented by importSearchGeneration (nothing was
+ * inserted) but must still block caching of any result computed while it
+ * happened -- see the errorsBefore/warningsBefore/insearchCutCountBefore
+ * check in SearchVisitor.visit(ScopeDsymbol).
+ */
+__gshared size_t insearchCutCount;
+
 /***********************************************************
  * Dsymbol that generates a scope
  */
@@ -1105,6 +1143,26 @@ extern (C++) class ScopeDsymbol : Dsymbol
     /// symbols whose members have been imported, i.e. imported modules and template mixins
     Dsymbols* importedScopes;
     Visibility.Kind* visibilities; // array of Visibility.Kind, one for each import
+
+    /* Memo cache for the "look in imported scopes" part of
+     * SearchVisitor.visit(ScopeDsymbol) (dsymbolsem.d). Keyed by
+     * (Identifier pointer << 8 | search flags byte) -> found Dsymbol.
+     *
+     * Only *successful* (non-null) lookups that completed without emitting
+     * any error or deprecation message, and without any symbol table
+     * anywhere changing in the meantime, are ever inserted (see the call
+     * site for why). Lazily allocated (a default-initialized AA costs
+     * nothing).
+     *
+     * importSearchCacheGeneration records the value of the global
+     * `importSearchGeneration` counter this cache was populated under; a
+     * mismatch means the cache is stale (or was never populated) and must
+     * be treated as empty -- see importSearchGeneration's doc comment
+     * above for why a single global fence is used instead of precise
+     * invalidation.
+     */
+    Dsymbol[size_t] importSearchCache;
+    size_t importSearchCacheGeneration;
 
 private:
 
@@ -1153,7 +1211,13 @@ public:
                     if (ss == s) // if already imported
                     {
                         if (visibility.kind > visibilities[i])
+                        {
                             visibilities[i] = visibility.kind; // upgrade access
+                            // Invalidate: a previously-private import became (more)
+                            // visible, so a search that skipped `s` because of
+                            // SearchOpt.ignorePrivateImports may now find something in it.
+                            importSearchGeneration++;
+                        }
                         return;
                     }
                 }
@@ -1161,6 +1225,10 @@ public:
             importedScopes.push(s);
             visibilities = cast(Visibility.Kind*)mem.xrealloc(visibilities, importedScopes.length * (visibilities[0]).sizeof);
             visibilities[importedScopes.length - 1] = visibility.kind;
+            // Invalidate: the import list just changed, so a search that
+            // previously missed (or hit something further down the list) may
+            // now find something new in `s`.
+            importSearchGeneration++;
         }
     }
 
@@ -1554,6 +1622,11 @@ extern (C++) final class DsymbolTable : RootObject
     void update(Dsymbol s)
     {
         *tab.getLvalue(s.ident) = s;
+        // This is the choke point every symbol table mutation passes through
+        // (see insert() below and importSearchGeneration's doc comment): bump
+        // unconditionally, since update() always changes what this identifier
+        // maps to, whether it was already present or not.
+        importSearchGeneration++;
     }
 
     /**************************
@@ -1583,6 +1656,11 @@ extern (C++) final class DsymbolTable : RootObject
         if (*ps)
             return null; // already in table
         *ps = s;
+        // See importSearchGeneration's doc comment: this table just grew, so
+        // any cached import-walk result computed before this point may no
+        // longer be correct. Only bump on an actual insertion (not the
+        // already-in-table case above), to keep this as tight as possible.
+        importSearchGeneration++;
         return s;
     }
 
