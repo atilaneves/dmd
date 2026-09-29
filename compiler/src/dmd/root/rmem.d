@@ -202,6 +202,14 @@ __gshared void* heapp;
 // alignment slack outside chunks and does not measure committed or resident memory.
 __gshared size_t heapTotal = 0;
 
+version (HugePages)
+{
+    // Set once the huge-page mmap fails. Address-space limits do not go
+    // away during a compile, so every later chunk goes straight to the
+    // malloc fallback instead of repeating a doomed mmap call.
+    private __gshared bool hugePageMmapFailed = false;
+}
+
 /**
  * Returns: the portion of `heapTotal` that has actually been handed out to
  * callers, i.e. `heapTotal` minus the unused tail of the current chunk.
@@ -219,21 +227,29 @@ private void* allocChunk(size_t minSize, out size_t capacity) nothrow @nogc
     capacity = CHUNK_SIZE;
     version (HugePages)
     {
-        // over-allocate so the chunk can be aligned to a huge page boundary
-        void* p = mmap(null, CHUNK_SIZE + HUGE_PAGE_SIZE, PROT_READ | PROT_WRITE,
-                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-        if (p == MAP_FAILED)
+        enum SMALL_CHUNK_SIZE = 256 * 4096 - 64;
+        if (!hugePageMmapFailed)
         {
-            // Keep small allocations possible under address-space limits.
-            enum SMALL_CHUNK_SIZE = 256 * 4096 - 64;
-            capacity = minSize > SMALL_CHUNK_SIZE ? minSize : SMALL_CHUNK_SIZE;
-            return Mem.check(malloc(capacity));
+            // over-allocate so the chunk can be aligned to a huge page boundary
+            void* p = mmap(null, CHUNK_SIZE + HUGE_PAGE_SIZE, PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+            if (p != MAP_FAILED)
+            {
+                // Keep the head and tail alignment slack mapped and untouched
+                // to avoid munmap bookkeeping. Commit accounting still
+                // depends on policy.
+                p = cast(void*) ((cast(size_t) p + HUGE_PAGE_SIZE - 1) & ~(HUGE_PAGE_SIZE - 1));
+                madvise(p, CHUNK_SIZE, MADV_HUGEPAGE); // failure only means no huge pages
+                return p;
+            }
+            // Remember the failure for the life of the process: address-space
+            // limits do not go away, so later chunks skip straight to malloc
+            // instead of repeating a doomed mmap call.
+            hugePageMmapFailed = true;
         }
-        // Keep the head and tail alignment slack mapped and untouched to
-        // avoid munmap bookkeeping. Commit accounting still depends on policy.
-        p = cast(void*) ((cast(size_t) p + HUGE_PAGE_SIZE - 1) & ~(HUGE_PAGE_SIZE - 1));
-        madvise(p, CHUNK_SIZE, MADV_HUGEPAGE); // failure only means no huge pages
-        return p;
+        // Keep small allocations possible under address-space limits.
+        capacity = minSize > SMALL_CHUNK_SIZE ? minSize : SMALL_CHUNK_SIZE;
+        return Mem.check(malloc(capacity));
     }
     else
         return Mem.check(malloc(CHUNK_SIZE));

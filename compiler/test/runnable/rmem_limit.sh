@@ -97,3 +97,58 @@ $DMD -I../src "${OUTPUT_BASE}.d" ../src/dmd/root/rmem.d \
     ulimit -v 65536
     "${OUTPUT_BASE}${EXE}"
 )
+
+# After the first mmap failure, later chunks must go straight to the malloc
+# fallback: count the large (>= 64MB) mmap attempts the process makes by
+# interposing the libc symbol the huge-page path actually calls. glibc
+# aliases the "mmap" the D binding calls to "mmap64" on this platform, so
+# that is the symbol to interpose (confirmed by objdump on the compiled call
+# site); interposing "mmap" alone would silently count nothing.
+cat > "${OUTPUT_BASE}.d" <<'EOF'
+module rmem_limit;
+
+import dmd.root.rmem : Mem, allocmemoryNoFree;
+import core.stdc.stdio : puts, printf;
+import core.sys.linux.dlfcn : dlsym, RTLD_NEXT;
+
+private extern (C) alias MmapFn =
+    void* function(void*, size_t, int, int, int, long) nothrow @nogc;
+
+__gshared int largeMmapCount = 0;
+__gshared MmapFn realMmap64;
+
+extern (C) void* mmap64(void* addr, size_t length, int prot, int flags,
+                        int fd, long offset) nothrow @nogc
+{
+    if (length >= 64 * 1024 * 1024)
+        largeMmapCount++;
+    if (realMmap64 is null)
+        realMmap64 = cast(MmapFn) dlsym(RTLD_NEXT, "mmap64");
+    return realMmap64(addr, length, prot, flags, fd, offset);
+}
+
+void main()
+{
+    Mem.disableGC();
+    // Small allocations so each fallback chunk holds many of them, and
+    // filling several fallback chunks stays well under the address-space
+    // limit set below.
+    enum size_t allocSize = 4096;
+    enum size_t numAllocs = 2048; // several fallback chunks worth
+    foreach (i; 0 .. numAllocs)
+    {
+        auto p = cast(ubyte*) allocmemoryNoFree(allocSize, 16);
+        p[0 .. allocSize] = cast(ubyte) i;
+    }
+    printf("large mmap attempts: %d\n", largeMmapCount);
+    assert(largeMmapCount == 1);
+    puts("large mmap attempted exactly once after first failure passed");
+}
+EOF
+
+$DMD -I../src "${OUTPUT_BASE}.d" ../src/dmd/root/rmem.d \
+    -L-ldl -of="${OUTPUT_BASE}${EXE}"
+(
+    ulimit -v 65536
+    "${OUTPUT_BASE}${EXE}"
+)
