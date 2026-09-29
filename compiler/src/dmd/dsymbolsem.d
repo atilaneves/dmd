@@ -7840,6 +7840,24 @@ private extern(C++) class SearchVisitor : Visitor
             return setResult(null);
 
         //printf(" look in imports\n");
+        /* Memo cache for this loop -- see ScopeDsymbol.importSearchCache (dsymbol.d)
+         * for the invalidation side. `flags` fits in a byte (see SearchOpt), so pack
+         * it with the Identifier pointer into a single size_t key; every flag that
+         * can change the outcome of the walk below is part of `flags`, so it must
+         * all be in the key.
+         */
+        const cacheKey = (cast(size_t)cast(void*)ident << 8) | (flags & 0xFF);
+        if (auto hit = cacheKey in sds.importSearchCache)
+        {
+            return setResult(*hit);
+        }
+        // Only cache the result if it was computed without side effects (no error or
+        // deprecation message printed along the way, e.g. from an ambiguity, a
+        // forward reference, or a deprecated symbol warning nested arbitrarily deep
+        // in the recursive ss.search() calls below) -- otherwise a cache hit would
+        // silently skip reproducing those messages on a later, identical lookup.
+        const errorsBefore = global.errors;
+        const warningsBefore = global.warnings;
         Dsymbol s = null;
         OverloadSet a = null;
         // Look in imported modules
@@ -7966,9 +7984,24 @@ private extern(C++) class SearchVisitor : Visitor
                 s = a;
             }
             //printf("\tfound in imports %s.%s\n", toChars(), s.toChars());
+            if (errorsBefore == global.errors && warningsBefore == global.warnings)
+                sds.importSearchCache[cacheKey] = s;
             return setResult(s);
         }
         //printf(" not found in imports\n");
+        /* Deliberately NOT cached: a "not found" result can go stale in a way a
+         * "found" result cannot. Symbols are never removed from a symbol table once
+         * added, so a positive result stays correct forever once observed. But an
+         * *imported* scope's symbol table is not necessarily finished growing at the
+         * time of this search: e.g. two modules that import each other are
+         * semantically analyzed while still referencing each other's (partially
+         * built) scopes, and a template mixin or static if lower down in an imported
+         * module's member list may not have been expanded yet. If we cached this
+         * miss, a later search for the same (sds, ident, flags) could keep returning
+         * "not found" even after the symbol has since been added -- a correctness
+         * bug, not just a staleness inefficiency. So negative results are always
+         * recomputed.
+         */
         return setResult(null);
     }
 

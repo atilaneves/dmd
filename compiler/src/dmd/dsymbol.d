@@ -1106,6 +1106,19 @@ extern (C++) class ScopeDsymbol : Dsymbol
     Dsymbols* importedScopes;
     Visibility.Kind* visibilities; // array of Visibility.Kind, one for each import
 
+    /* Memo cache for the "look in imported scopes" part of
+     * SearchVisitor.visit(ScopeDsymbol) (dsymbolsem.d). Keyed by
+     * (Identifier pointer << 8 | search flags byte) -> found Dsymbol.
+     *
+     * Only *successful* (non-null) lookups that completed without emitting
+     * any error or deprecation message are ever inserted (see the call site
+     * for why). Lazily allocated (a default-initialized AA costs nothing),
+     * and invalidated by clearing it outright whenever anything the walk
+     * depends on changes, i.e. every mutation of importedScopes/visibilities
+     * in importScope() below.
+     */
+    Dsymbol[size_t] importSearchCache;
+
 private:
 
     import dmd.root.bitarray;
@@ -1153,7 +1166,13 @@ public:
                     if (ss == s) // if already imported
                     {
                         if (visibility.kind > visibilities[i])
+                        {
                             visibilities[i] = visibility.kind; // upgrade access
+                            // Invalidate: a previously-private import became (more)
+                            // visible, so a search that skipped `s` because of
+                            // SearchOpt.ignorePrivateImports may now find something in it.
+                            importSearchCache = null;
+                        }
                         return;
                     }
                 }
@@ -1161,6 +1180,10 @@ public:
             importedScopes.push(s);
             visibilities = cast(Visibility.Kind*)mem.xrealloc(visibilities, importedScopes.length * (visibilities[0]).sizeof);
             visibilities[importedScopes.length - 1] = visibility.kind;
+            // Invalidate: the import list just changed, so a search that
+            // previously missed (or hit something further down the list) may
+            // now find something new in `s`.
+            importSearchCache = null;
         }
     }
 
