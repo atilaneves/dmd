@@ -19,7 +19,8 @@ struct SharedStruct
     Nested* indirect;
 
     // Construction may initialize fields before the shared instance is published.
-    this(int initial) shared { value = initial; }
+    // Re-assigning and reading fields in the constructor is also fine.
+    this(int initial) shared { value = initial; value = 2; int x = value; while (value < 10) value = value + 1; }
     // Returning an address or reference does not read the shared field value.
     shared(int)* address() return shared { return &value; }
     ref shared(int) reference() return shared { return value; }
@@ -53,7 +54,8 @@ class SharedClass
     Nested* indirect;
 
     // Construction may initialize fields before the shared instance is published.
-    this(int initial) shared { value = initial; }
+    // Re-assigning and reading fields in the constructor is also fine.
+    this(int initial) shared { value = initial; value = 2; int x = value; while (value < 10) value = value + 1; }
     // Returning an address or reference does not read the shared field value.
     shared(int)* address() shared { return &value; }
     ref shared(int) reference() shared { return value; }
