@@ -9530,6 +9530,10 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         if (Expression e = exp.opOverloadBinaryAssign(sc, aliasThisStop))
             return setOpOverloadAssign(e);
 
+        // The array operation and `.length` forms below don't come back here
+        if (exp.e2.checkSharedAccess(sc))
+            return setError();
+
         Expression e;
         if (exp.e1.op == EXP.arrayLength)
         {
@@ -9571,8 +9575,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         if (exp.suggestOpOpAssign(sc, parent) ||
             exp.e1.checkScalar() ||
             exp.e1.checkReadModifyWrite(exp.op, exp.e2) ||
-            exp.e1.checkSharedAccess(sc) ||
-            exp.e2.checkSharedAccess(sc))
+            exp.e1.checkSharedAccess(sc))
             return setError();
 
         int arith = (exp.op == EXP.addAssign || exp.op == EXP.minAssign || exp.op == EXP.mulAssign || exp.op == EXP.divAssign || exp.op == EXP.modAssign || exp.op == EXP.powAssign);
@@ -13935,7 +13938,6 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         exp.e1 = exp.e1.arrayFuncConv(sc);
         exp.e2 = exp.e2.arrayFuncConv(sc);
 
-        // Check before `typeCombine` hides shared operands behind implicit casts
         if (exp.checkSharedAccessBin(sc))
             return setError();
 
@@ -14038,7 +14040,6 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         exp.e1 = exp.e1.arrayFuncConv(sc);
         exp.e2 = exp.e2.arrayFuncConv(sc);
 
-        // Check before `typeCombine` hides shared operands behind implicit casts
         if (exp.checkSharedAccessBin(sc))
             return setError();
 
@@ -14461,7 +14462,6 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             return true;
         }
 
-        // Check before `typeCombine` hides shared operands behind implicit casts
         if (exp.checkSharedAccessBin(sc))
         {
             setError();
@@ -14794,7 +14794,6 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             return;
         }
 
-        // Check before `typeCombine` hides shared operands behind implicit casts
         if (exp.checkSharedAccessBin(sc))
             return setError();
 
@@ -14957,7 +14956,6 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             return;
         }
 
-        // Check before `typeCombine` hides shared operands behind implicit casts
         if (exp.checkSharedAccessBin(sc))
             return setError();
 
@@ -15539,8 +15537,12 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             return;
         }
 
-        // Check before `typeCombine` hides shared operands behind implicit casts
-        if (exp.checkSharedAccessBin(sc))
+        // `typeCombine` converts a struct or class with `alias this` through
+        // the alias, which may be a `shared` method. Check those afterwards.
+        const alias1 = exp.e1.type.hasAliasThis();
+        const alias2 = exp.e2.type.hasAliasThis();
+        if ((!alias1 && exp.e1.checkSharedAccess(sc)) ||
+            (!alias2 && exp.e2.checkSharedAccess(sc)))
             return setError();
 
         if (auto e = typeCombine(exp, sc))
@@ -15548,6 +15550,10 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             result = e;
             return;
         }
+
+        if ((alias1 && exp.e1.checkSharedAccess(sc)) ||
+            (alias2 && exp.e2.checkSharedAccess(sc)))
+            return setError();
 
         auto f1 = checkNonAssignmentArrayOp(exp.e1);
         auto f2 = checkNonAssignmentArrayOp(exp.e2);
@@ -15711,6 +15717,12 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         }
         else
         {
+            // `typeCombine` casts the branches to the common type, which would
+            // hide a shared lvalue. Branches of the same type are left alone,
+            // as the result may still be used as an lvalue (e.g. `ref` argument)
+            if (exp.e1.checkSharedAccess(sc) || exp.e2.checkSharedAccess(sc))
+                return setError();
+
             if (Expression ex = typeCombine(exp, sc))
             {
                 result = ex;
@@ -17033,6 +17045,25 @@ private bool checkReadModifyWrite(Expression e, EXP rmwOp, Expression ex = null)
     return true;
 }
 
+/***************************************
+ * Returns:
+ *      true if `t` is a struct or class with an `alias this`
+ */
+private bool hasAliasThis(Type t)
+{
+    auto ad = isAggregate(t.toBasetype());
+    return ad && ad.aliasthis;
+}
+
+/***************************************
+ * Check both operands of `binExp` for shared access.
+ *
+ * Must be called before `typeCombine`, which wraps an operand whose type
+ * differs from the common type in an implicit cast. The cast has an unshared
+ * type, so `checkSharedAccess` no longer sees the shared lvalue under it.
+ * Returns:
+ *      true on error
+ */
 private bool checkSharedAccessBin(BinExp binExp, Scope* sc)
 {
     const r1 = binExp.e1.checkSharedAccess(sc);
@@ -17317,9 +17348,8 @@ bool checkSharedAccess(Expression e, Scope* sc, bool returnRef = false)
 
         bool visitComma(CommaExp e)
         {
-            // Cannot be `return ref` since we can't use the return,
-            // but it's better to show that error than an unrelated `shared` one
-            return check(e.e2, true);
+            // Only the last expression is the result, report that one
+            return check(e.e2, allowRef);
         }
 
         switch (e.op)
@@ -17334,7 +17364,10 @@ bool checkSharedAccess(Expression e, Scope* sc, bool returnRef = false)
             case EXP.null_:       return false;
 
             // The operands were checked when these were analysed, and the
-            // result is an rvalue, so no shared memory is read here
+            // result is an rvalue, so no shared memory is read here. Only
+            // allow it where accessing the fields of `this` is allowed
+            // anyway, otherwise `this.a * this.a` would only be rejected
+            // because its result is `shared`.
             case EXP.add:
             case EXP.min:
             case EXP.mul:
@@ -17350,7 +17383,10 @@ bool checkSharedAccess(Expression e, Scope* sc, bool returnRef = false)
             case EXP.negate:
             case EXP.tilde:
             case EXP.uadd:
-                if (e.type.toBasetype().isStaticOrDynamicArray())
+                if (e.type.toBasetype().isStaticOrDynamicArray() ||
+                    !sc.func ||
+                    !(sc.func.isSynchronized() ||
+                      (sc.func.isCtorDeclaration() && sc.func.type.isShared())))
                     return visit(e);
                 return false;
 
@@ -17360,6 +17396,7 @@ bool checkSharedAccess(Expression e, Scope* sc, bool returnRef = false)
             case EXP.star:        return visitPtr(e.isPtrExp());
             case EXP.dotVariable: return visitDotVar(e.isDotVarExp());
             case EXP.index:       return visitIndex(e.isIndexExp());
+            case EXP.comma:       return visitComma(e.isCommaExp());
             case EXP.structLiteral:
                 // Allow constructing a shared struct literal as a value,
                 // but keep rejecting later accesses through that temporary.

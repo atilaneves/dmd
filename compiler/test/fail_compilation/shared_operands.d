@@ -30,6 +30,19 @@ fail_compilation/shared_operands.d(141): Error: direct access to shared `x` is n
 fail_compilation/shared_operands.d(142): Error: direct access to shared `x` is not allowed, see `core.atomic`
 fail_compilation/shared_operands.d(143): Error: direct access to shared `x` is not allowed, see `core.atomic`
 fail_compilation/shared_operands.d(144): Error: direct access to shared `x` is not allowed, see `core.atomic`
+fail_compilation/shared_operands.d(149): Error: direct access to shared `x` is not allowed, see `core.atomic`
+fail_compilation/shared_operands.d(150): Error: direct access to shared `x` is not allowed, see `core.atomic`
+fail_compilation/shared_operands.d(151): Error: direct access to shared `x` is not allowed, see `core.atomic`
+fail_compilation/shared_operands.d(152): Error: direct access to shared `lc ? x : x` is not allowed, see `core.atomic`
+fail_compilation/shared_operands.d(157): Error: direct access to shared `x` is not allowed, see `core.atomic`
+fail_compilation/shared_operands.d(162): Error: direct access to shared `x` is not allowed, see `core.atomic`
+fail_compilation/shared_operands.d(163): Error: direct access to shared `x` is not allowed, see `core.atomic`
+fail_compilation/shared_operands.d(173): Error: direct access to shared `this.a * this.a` is not allowed, see `core.atomic`
+fail_compilation/shared_operands.d(174): Error: direct access to shared `-this.a` is not allowed, see `core.atomic`
+fail_compilation/shared_operands.d(183): Error: direct access to shared `this.a * this.a` is not allowed, see `core.atomic`
+fail_compilation/shared_operands.d(192): Error: direct access to shared `this.n * this.m` is not allowed, see `core.atomic`
+fail_compilation/shared_operands.d(199): Error: using the result of a comma expression is not allowed
+fail_compilation/shared_operands.d(199): Error: direct access to shared `x` is not allowed, see `core.atomic`
 ---
 */
 
@@ -83,3 +96,59 @@ void others(int[] arr)
     auto a = arr[x];
     switch (x) { default: }
 }
+
+void branches(bool lc)
+{
+    int a = lc ? x : 0;
+    long b = lc ? x : 0L;
+    auto c = (lc ? x : 1) + 1;
+    auto d = lc ? x : x;
+}
+
+int branchReturn(bool b)
+{
+    return b ? x : 0;
+}
+
+void arrayOps(int[] arr, int[2] st)
+{
+    arr[] += x;
+    st[] *= x;
+}
+
+// Fields of `this` are only exempt where that is always safe, so
+// the shared result of arithmetic on them is still an error
+struct S
+{
+    shared int a;
+    void f()
+    {
+        int k = a * a;
+        int l = -a;
+    }
+}
+
+class C
+{
+    shared int a;
+    int g()
+    {
+        return a * a;
+    }
+}
+
+struct P
+{
+    size_t n, m;
+    size_t h() shared
+    {
+        size_t q = n * m;
+        return q;
+    }
+}
+
+void commaOperand(bool lc)
+{
+    int a = (lc ? 1 : 2, x) + 1;
+}
+

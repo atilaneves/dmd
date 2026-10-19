@@ -59,7 +59,7 @@ void test(shared(int)* p, shared(int)[] arr)
     auto j = typeof(x).max > 0;
 }
 
-// Accessing fields through `this` in shared constructors and methods
+// Accessing fields through `this` with `core.atomic` in shared constructors and methods
 struct T
 {
     shared int v;
@@ -67,44 +67,45 @@ struct T
 
     this(int i) shared
     {
-        if (v > 0) {}
-        if (flag) {}
-        auto n = new int(v + 1);
+        if (atomicLoad(v) > 0) {}
+        if (atomicLoad(flag)) {}
+        auto n = new int(atomicLoad(v) + 1);
     }
 
     void m() shared
     {
-        if (flag && v == 0) {}
+        if (atomicLoad(flag) && atomicLoad(v) == 0) {}
     }
 }
 
-// The result of arithmetic on such fields is an rvalue, so using it as an
-// operand or initializer doesn't read shared memory (see
-// std.experimental.allocator.building_blocks.ascending_page_allocator)
 struct Pages
 {
     size_t numPages, pageSize;
 
     bool owns(void[] buf) shared
     {
-        return buf.ptr < buf.ptr + numPages * pageSize;
+        return buf.ptr < buf.ptr + atomicLoad(numPages) * atomicLoad(pageSize);
     }
 
     size_t total() shared
     {
-        size_t n = numPages * pageSize;
-        if (numPages * pageSize > 0) {}
-        size_t m = -numPages + ~pageSize;
+        size_t n = atomicLoad(numPages) * atomicLoad(pageSize);
+        size_t m = -atomicLoad(numPages) + ~atomicLoad(pageSize);
         return n + m;
     }
 }
 
+// Fields of `this` that are always accessed safely, the result of
+// arithmetic on them is an rvalue and doesn't read shared memory again.
+// The preview used to reject these because the result is `shared`.
 class K
 {
     shared int v;
     this() shared
     {
         if (v + 1 > 0) {}
+        int q = v * v;
+        int r = -v;
     }
 }
 
@@ -115,5 +116,42 @@ synchronized class Sync
     {
         if (k > 0) {}
         k = k + 1;
+        int q = k * k;
+        int r = ~k + (k << 1);
     }
+}
+
+// `alias this` to a `shared` method that does the atomic read
+struct G
+{
+    int v;
+    int get() shared { return atomicLoad(v); }
+    alias get this;
+}
+
+shared G g;
+
+void aliasThis()
+{
+    bool a = g is 0;
+    bool b = g !is 0;
+    bool c = g == 0;
+    bool d = g < 1;
+    int e = g + 1;
+}
+
+// Branches of the same type may still be used as lvalues
+void branches(bool lc)
+{
+    byRef(lc ? x : y);
+    auto a = atomicLoad(lc ? x : y);
+    auto b = lc ? atomicLoad(x) : 0;
+    long c = lc ? cast() x : 0L;
+    auto d = cast() (lc ? x : y);
+}
+
+void arrayOps(int[] arr, int[2] st)
+{
+    arr[] += atomicLoad(x);
+    st[] *= cast() x;
 }
