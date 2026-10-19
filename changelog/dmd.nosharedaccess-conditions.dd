@@ -33,19 +33,26 @@ auto a = atomicLoad(x) > 0;
 auto b = cast() x + 1;
 ---
 
-The result of arithmetic on `shared` values that may be accessed directly,
-such as fields reached through `this` in a `shared` member function, is an
-rvalue and is no longer reported as a shared access itself:
+The branches of `?:` are checked too when their types differ, since the
+conditional then converts them to a common type: `int z = c ? x : 0;` is an error.
+
+In a `synchronized` member function and in a `shared` constructor, the fields
+of `this` may already be accessed directly. The `shared` result of arithmetic
+on them is now accepted there as well, which used to be an error even though
+each operand was accepted:
 
 ---
-struct Pages
+synchronized class Sync
 {
-    size_t numPages, pageSize;
+    private int k;
+    int f() { return k * k; } // previously an error, now accepted
+}
 
-    size_t total() shared
-    {
-        size_t n = numPages * pageSize; // previously an error, now accepted
-        return n;
-    }
+class K
+{
+    shared int v;
+    this() shared { int q = v * v; } // ditto
 }
 ---
+
+Everywhere else, the `shared` result of arithmetic is still reported as before.
