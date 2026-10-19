@@ -609,7 +609,7 @@ if (!is(T == enum) && (is(T == interface) || is(T == class))
 }
 
 //class or interface hash. CTFE depends on toHash
-size_t hashOf(T)(T val)
+size_t hashOf(T)(auto ref T val)
 if (!is(T == enum) && (is(T == interface) || is(T == class))
     && !canBitwiseHash!T)
 {
@@ -626,7 +626,7 @@ if (!is(T == enum) && (is(T == interface) || is(T == class))
 }
 
 //class or interface hash. CTFE depends on toHash
-size_t hashOf(T)(T val, size_t seed)
+size_t hashOf(T)(auto ref T val, size_t seed)
 if (!is(T == enum) && (is(T == interface) || is(T == class))
     && !canBitwiseHash!T)
 {
