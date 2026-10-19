@@ -222,7 +222,7 @@ if (is(T == S[], S) && (__traits(isScalar, S) || canBitwiseHash!S)) // excludes 
 }
 
 //dynamic array hash
-size_t hashOf(T)(T val, size_t seed = 0)
+size_t hashOf(T)(auto ref T val, size_t seed = 0)
 if (is(T == S[], S) && !(__traits(isScalar, S) || canBitwiseHash!S)) // excludes enum types
 {
     size_t hash = seed;
