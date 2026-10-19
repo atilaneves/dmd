@@ -26,6 +26,7 @@ import core.thread : isSingleThreaded;
 
 version (Windows)
 {
+    import core.atomic : atomicLoad, atomicStore;
     import core.sync.semaphore;
     import core.sys.windows.basetsd /+: HANDLE+/;
     import core.sys.windows.winbase /+: CloseHandle, CreateSemaphoreA, CRITICAL_SECTION,
@@ -116,9 +117,27 @@ class Condition
             scope(failure) CloseHandle( cast(void*) m_blockQueue );
 
             InitializeCriticalSection( cast(RTL_CRITICAL_SECTION*) &m_unblockLock );
+            static if (is(Q == shared))
+            {
+                import core.atomic : atomicLoad;
+                m_assocMutex = atomicLoad(m);
+            }
+            else
+            {
+                m_assocMutex = m;
+            }
         }
         else version (Posix)
         {
+            static if (is(Q == shared))
+            {
+                import core.atomic : atomicLoad;
+                m_assocMutex = atomicLoad(m);
+            }
+            else
+            {
+                m_assocMutex = m;
+            }
             static if ( is( typeof( imported!"core.sys.posix.pthread".pthread_condattr_setclock ) ) )
             {
                 import core.sys.posix.pthread : pthread_condattr_destroy, pthread_condattr_init,
@@ -148,15 +167,6 @@ class Condition
                 if ( rc )
                     throw staticError!AssertError("Unable to initialize condition", __FILE__, __LINE__);
             }
-        }
-        static if (is(Q == shared))
-        {
-            import core.atomic : atomicLoad;
-            m_assocMutex = atomicLoad(m);
-        }
-        else
-        {
-            m_assocMutex = m;
         }
     }
 
@@ -458,12 +468,12 @@ private:
             EnterCriticalSection( &m_unblockLock );
             scope(failure) LeaveCriticalSection( &m_unblockLock );
 
-            if ( (numSignalsLeft = m_numWaitersToUnblock) != 0 )
+            if ( (numSignalsLeft = atomicLoad(m_numWaitersToUnblock)) != 0 )
             {
                 if ( timedOut )
                 {
                     // timeout (or canceled)
-                    if ( m_numWaitersBlocked != 0 )
+                    if ( atomicLoad(m_numWaitersBlocked) != 0 )
                     {
                         op!"-="(m_numWaitersBlocked, 1);
                         // do not unblock next waiter below (already unblocked)
@@ -472,12 +482,12 @@ private:
                     else
                     {
                         // spurious wakeup pending!!
-                        m_numWaitersGone = 1;
+                        atomicStore(m_numWaitersGone, 1);
                     }
                 }
                 if ( op!"-="(m_numWaitersToUnblock, 1) == 0 )
                 {
-                    if ( m_numWaitersBlocked != 0 )
+                    if ( atomicLoad(m_numWaitersBlocked) != 0 )
                     {
                         // open the gate
                         rc = ReleaseSemaphore( cast(HANDLE) m_blockLock, 1, null );
@@ -485,9 +495,9 @@ private:
                         // do not open the gate below again
                         numSignalsLeft = 0;
                     }
-                    else if ( (numWaitersGone = m_numWaitersGone) != 0 )
+                    else if ( (numWaitersGone = atomicLoad(m_numWaitersGone)) != 0 )
                     {
-                        m_numWaitersGone = 0;
+                        atomicStore(m_numWaitersGone, 0);
                     }
                 }
             }
@@ -500,7 +510,7 @@ private:
                 op!"-="(m_numWaitersBlocked, m_numWaitersGone);
                 rc = ReleaseSemaphore( cast(HANDLE) m_blockLock, 1, null );
                 assert( rc == WAIT_OBJECT_0 );
-                m_numWaitersGone = 0;
+                atomicStore(m_numWaitersGone, 0);
             }
 
             LeaveCriticalSection( &m_unblockLock );
@@ -552,9 +562,9 @@ private:
             EnterCriticalSection( &m_unblockLock );
             scope(failure) LeaveCriticalSection( &m_unblockLock );
 
-            if ( m_numWaitersToUnblock != 0 )
+            if ( atomicLoad(m_numWaitersToUnblock) != 0 )
             {
-                if ( m_numWaitersBlocked == 0 )
+                if ( atomicLoad(m_numWaitersBlocked) == 0 )
                 {
                     LeaveCriticalSection( &m_unblockLock );
                     return;
@@ -562,7 +572,7 @@ private:
                 if ( all )
                 {
                     op!"+="(m_numWaitersToUnblock, m_numWaitersBlocked);
-                    m_numWaitersBlocked = 0;
+                    atomicStore(m_numWaitersBlocked, 0);
                 }
                 else
                 {
@@ -571,23 +581,23 @@ private:
                 }
                 LeaveCriticalSection( &m_unblockLock );
             }
-            else if ( m_numWaitersBlocked > m_numWaitersGone )
+            else if ( atomicLoad(m_numWaitersBlocked) > atomicLoad(m_numWaitersGone) )
             {
                 rc = WaitForSingleObject( cast(HANDLE) m_blockLock, INFINITE );
                 assert( rc == WAIT_OBJECT_0 );
-                if ( 0 != m_numWaitersGone )
+                if ( 0 != atomicLoad(m_numWaitersGone) )
                 {
                     op!"-="(m_numWaitersBlocked, m_numWaitersGone);
-                    m_numWaitersGone = 0;
+                    atomicStore(m_numWaitersGone, 0);
                 }
                 if ( all )
                 {
-                    m_numWaitersToUnblock = m_numWaitersBlocked;
-                    m_numWaitersBlocked = 0;
+                    atomicStore(m_numWaitersToUnblock, atomicLoad(m_numWaitersBlocked));
+                    atomicStore(m_numWaitersBlocked, 0);
                 }
                 else
                 {
-                    m_numWaitersToUnblock = 1;
+                    atomicStore(m_numWaitersToUnblock, 1);
                     op!"-="(m_numWaitersBlocked, 1);
                 }
                 LeaveCriticalSection( &m_unblockLock );
