@@ -25,7 +25,6 @@ version (X86):
 
 // debug = PRINTF;
 
-import core.atomic : atomicLoad;
 import core.internal.container.array;
 import core.stdc.stdint : intptr_t;
 import core.stdc.stdio : fprintf, perror, stderr;
@@ -214,12 +213,12 @@ extern (C) void sections_osx_onAddImage(const scope mach_header* h, intptr_t sli
         // take the sections from the last static image which is the executable
         if (_isRuntimeInitialized)
         {
-            fprintf(atomicLoad(stderr), "Loading shared libraries isn't yet supported on Darwin.\n");
+            fprintf(cast()stderr, "Loading shared libraries isn't yet supported on Darwin.\n");
             return;
         }
         else if (_sections.modules.ptr !is null)
         {
-            fprintf(atomicLoad(stderr), "Shared libraries are not yet supported on Darwin.\n");
+            fprintf(cast()stderr, "Shared libraries are not yet supported on Darwin.\n");
         }
 
         debug(PRINTF) printf("  minfodata\n");
