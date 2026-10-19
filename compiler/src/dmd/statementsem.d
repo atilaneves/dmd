@@ -1971,6 +1971,8 @@ Statement statementSemanticVisit(Statement s, Scope* sc)
         bool conditionError = false;
         ss.condition = ss.condition.expressionSemantic(sc);
         ss.condition = resolveProperties(sc, ss.condition);
+        if (ss.condition.checkSharedAccess(sc))
+            ss.condition = ErrorExp.get();
 
         Type att = null;
         TypeEnum te = null;

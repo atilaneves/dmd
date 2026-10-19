@@ -1,0 +1,51 @@
+`-preview=nosharedaccess` now checks conditions and operands
+
+Reading a `shared` lvalue as a condition, or as an operand of an arithmetic,
+bitwise, relational or identity expression, used to slip past
+`-preview=nosharedaccess`. The same read was rejected when written as an
+initializer such as `bool b = c;`. These reads are now rejected as well:
+
+---
+shared bool c;
+shared int x;
+
+void main()
+{
+    if (c) {}            // Error: direct access to shared `c` is not allowed
+    while (c) {}         // ditto, also `for`, `do`, `assert`, `?:`, `!`, `&&`, `||`
+    auto a = x > 0;      // Error: direct access to shared `x` is not allowed
+    auto b = x + 1;      // ditto, also `-`, `*`, `/`, `%`, `^^`, `&`, `|`, `^`, `is`
+    int y;
+    y += x;              // ditto
+    switch (x) { default: } // ditto
+    int[] arr;
+    auto e = arr[x];     // ditto
+}
+---
+
+Use `core.atomic` or an explicit cast instead:
+
+---
+import core.atomic;
+
+if (atomicLoad(c)) {}
+auto a = atomicLoad(x) > 0;
+auto b = cast() x + 1;
+---
+
+The result of arithmetic on `shared` values that may be accessed directly,
+such as fields reached through `this` in a `shared` member function, is an
+rvalue and is no longer reported as a shared access itself:
+
+---
+struct Pages
+{
+    size_t numPages, pageSize;
+
+    size_t total() shared
+    {
+        size_t n = numPages * pageSize; // previously an error, now accepted
+        return n;
+    }
+}
+---

@@ -9571,7 +9571,8 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         if (exp.suggestOpOpAssign(sc, parent) ||
             exp.e1.checkScalar() ||
             exp.e1.checkReadModifyWrite(exp.op, exp.e2) ||
-            exp.e1.checkSharedAccess(sc))
+            exp.e1.checkSharedAccess(sc) ||
+            exp.e2.checkSharedAccess(sc))
             return setError();
 
         int arith = (exp.op == EXP.addAssign || exp.op == EXP.minAssign || exp.op == EXP.mulAssign || exp.op == EXP.divAssign || exp.op == EXP.modAssign || exp.op == EXP.powAssign);
@@ -9595,9 +9596,9 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             return;
         }
 
-        if (arith && (exp.checkArithmeticBin() || exp.checkSharedAccessBin(sc)))
+        if (arith && exp.checkArithmeticBin())
             return setError();
-        if ((bitwise || shift) && (exp.checkIntegralBin() || exp.checkSharedAccessBin(sc)))
+        if ((bitwise || shift) && exp.checkIntegralBin())
             return setError();
 
         if (shift)
@@ -11939,6 +11940,8 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             sc = sc.pop();
         if (exp.e2.type == Type.terror)
             return setError();
+        if (exp.e2.checkSharedAccess(sc))
+            return setError();
 
         if (checkNonAssignmentArrayOp(exp.e1))
             return setError();
@@ -13932,6 +13935,10 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         exp.e1 = exp.e1.arrayFuncConv(sc);
         exp.e2 = exp.e2.arrayFuncConv(sc);
 
+        // Check before `typeCombine` hides shared operands behind implicit casts
+        if (exp.checkSharedAccessBin(sc))
+            return setError();
+
         Type tb1 = exp.e1.type.toBasetype();
         Type tb2 = exp.e2.type.toBasetype();
 
@@ -14030,6 +14037,10 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
          */
         exp.e1 = exp.e1.arrayFuncConv(sc);
         exp.e2 = exp.e2.arrayFuncConv(sc);
+
+        // Check before `typeCombine` hides shared operands behind implicit casts
+        if (exp.checkSharedAccessBin(sc))
+            return setError();
 
         Type t1 = exp.e1.type.toBasetype();
         Type t2 = exp.e2.type.toBasetype();
@@ -14450,6 +14461,13 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             return true;
         }
 
+        // Check before `typeCombine` hides shared operands behind implicit casts
+        if (exp.checkSharedAccessBin(sc))
+        {
+            setError();
+            return true;
+        }
+
         if (Expression ex = typeCombine(exp, sc))
         {
             result = ex;
@@ -14468,7 +14486,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             return true;
         }
 
-        if (exp.suggestBinaryOverloads(sc) || exp.checkArithmeticBin() || exp.checkSharedAccessBin(sc))
+        if (exp.suggestBinaryOverloads(sc) || exp.checkArithmeticBin())
         {
             setError();
             return true;
@@ -14776,6 +14794,10 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             return;
         }
 
+        // Check before `typeCombine` hides shared operands behind implicit casts
+        if (exp.checkSharedAccessBin(sc))
+            return setError();
+
         if (exp.e1.type.toBasetype().ty == Tbool && exp.e2.type.toBasetype().ty == Tbool)
         {
             exp.type = exp.e1.type;
@@ -14806,7 +14828,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             return;
         }
 
-        if (exp.suggestBinaryOverloads(sc) || exp.checkIntegralBin() || exp.checkSharedAccessBin(sc))
+        if (exp.suggestBinaryOverloads(sc) || exp.checkIntegralBin())
             return setError();
 
         result = exp;
@@ -14935,6 +14957,10 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             return;
         }
 
+        // Check before `typeCombine` hides shared operands behind implicit casts
+        if (exp.checkSharedAccessBin(sc))
+            return setError();
+
         if (Expression ex = typeCombine(exp, sc))
         {
             result = ex;
@@ -15010,8 +15036,8 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         }
         else
         {
-            bool r1 = exp.e1.checkValue() || exp.e1.checkSharedAccess(sc);
-            bool r2 = exp.e2.checkValue() || exp.e2.checkSharedAccess(sc);
+            bool r1 = exp.e1.checkValue();
+            bool r2 = exp.e2.checkValue();
             if (r1 || r2)
                 return setError();
         }
@@ -15512,6 +15538,10 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             result = e;
             return;
         }
+
+        // Check before `typeCombine` hides shared operands behind implicit casts
+        if (exp.checkSharedAccessBin(sc))
+            return setError();
 
         if (auto e = typeCombine(exp, sc))
         {
@@ -17303,6 +17333,27 @@ bool checkSharedAccess(Expression e, Scope* sc, bool returnRef = false)
             case EXP.int64:
             case EXP.null_:       return false;
 
+            // The operands were checked when these were analysed, and the
+            // result is an rvalue, so no shared memory is read here
+            case EXP.add:
+            case EXP.min:
+            case EXP.mul:
+            case EXP.div:
+            case EXP.mod:
+            case EXP.pow:
+            case EXP.and:
+            case EXP.or:
+            case EXP.xor:
+            case EXP.leftShift:
+            case EXP.rightShift:
+            case EXP.unsignedRightShift:
+            case EXP.negate:
+            case EXP.tilde:
+            case EXP.uadd:
+                if (e.type.toBasetype().isStaticOrDynamicArray())
+                    return visit(e);
+                return false;
+
             case EXP.variable:    return visitVar(e.isVarExp());
             case EXP.new_:        return visitNew(e.isNewExp());
             case EXP.address:     return visitAddr(e.isAddrExp());
@@ -18523,6 +18574,8 @@ Expression toBoolean(Expression exp, Scope* sc)
             }
 
             e = checkNoreturnVarAccess(e);
+            if (e.checkSharedAccess(sc))
+                return ErrorExp.get();
             if (!t.isBoolean())
             {
                 if (tb != Type.terror)
