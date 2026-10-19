@@ -3738,7 +3738,7 @@ Lmark:
             alias allThreadsDead = thread_DLLProcessDetaching;
         else
             enum allThreadsDead = false;
-        stopGC = true;
+        atomicStore(stopGC, true);
         while (atomicLoad(stoppedThreads) < startedThreads && !allThreadsDead)
         {
             evStackFilled.setIfInitialized();
@@ -3766,7 +3766,7 @@ Lmark:
 
     void scanBackground() nothrow
     {
-        while (!stopGC)
+        while (!atomicLoad(stopGC))
         {
             evStackFilled.wait();
             pullFromScanStack();
