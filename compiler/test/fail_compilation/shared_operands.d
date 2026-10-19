@@ -37,10 +37,10 @@ fail_compilation/shared_operands.d(152): Error: direct access to shared `lc ? x 
 fail_compilation/shared_operands.d(157): Error: direct access to shared `x` is not allowed, see `core.atomic`
 fail_compilation/shared_operands.d(162): Error: direct access to shared `x` is not allowed, see `core.atomic`
 fail_compilation/shared_operands.d(163): Error: direct access to shared `x` is not allowed, see `core.atomic`
-fail_compilation/shared_operands.d(173): Error: direct access to shared `this.a * this.a` is not allowed, see `core.atomic`
-fail_compilation/shared_operands.d(174): Error: direct access to shared `-this.a` is not allowed, see `core.atomic`
-fail_compilation/shared_operands.d(183): Error: direct access to shared `this.a * this.a` is not allowed, see `core.atomic`
-fail_compilation/shared_operands.d(192): Error: direct access to shared `this.n * this.m` is not allowed, see `core.atomic`
+fail_compilation/shared_operands.d(173): Error: direct access to shared `$r:this\.a( \* this\.a)?` is not allowed, see `core\.atomic`(\nfail_compilation/shared_operands\.d\(173\): Error: direct access to shared `this\.a` is not allowed, see `core\.atomic`)?$
+fail_compilation/shared_operands.d(174): Error: direct access to shared `$r:-?this\.a` is not allowed, see `core\.atomic`$
+fail_compilation/shared_operands.d(183): Error: direct access to shared `$r:this\.a( \* this\.a)?` is not allowed, see `core\.atomic`(\nfail_compilation/shared_operands\.d\(183\): Error: direct access to shared `this\.a` is not allowed, see `core\.atomic`)?$
+fail_compilation/shared_operands.d(192): Error: direct access to shared `$r:this\.n( \* this\.m)?` is not allowed, see `core\.atomic`(\nfail_compilation/shared_operands\.d\(192\): Error: direct access to shared `this\.m` is not allowed, see `core\.atomic`)?$
 fail_compilation/shared_operands.d(199): Error: using the result of a comma expression is not allowed
 fail_compilation/shared_operands.d(199): Error: direct access to shared `x` is not allowed, see `core.atomic`
 ---
@@ -48,6 +48,8 @@ fail_compilation/shared_operands.d(199): Error: direct access to shared `x` is n
 
 // Reading a shared lvalue as a condition or as an operand of
 // a unary/binary expression is a read and must go through `core.atomic`.
+// The expected output for the fields of `this` is a regex since the fields
+// themselves are also reported when fix-nosharedaccess-this-fields is merged.
 
 #line 100
 
