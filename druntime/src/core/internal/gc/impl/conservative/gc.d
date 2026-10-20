@@ -3738,7 +3738,7 @@ Lmark:
             alias allThreadsDead = thread_DLLProcessDetaching;
         else
             enum allThreadsDead = false;
-        stopGC = true;
+        atomicStore(stopGC, true);
         while (atomicLoad(stoppedThreads) < startedThreads && !allThreadsDead)
         {
             evStackFilled.setIfInitialized();
@@ -3766,7 +3766,7 @@ Lmark:
 
     void scanBackground() nothrow
     {
-        while (!stopGC)
+        while (!atomicLoad(stopGC))
         {
             evStackFilled.wait();
             pullFromScanStack();
@@ -3815,7 +3815,7 @@ Lmark:
             stackLock.lock();
             busyThreads.atomicOp!"-="(1);
         }
-        bool cont = busyThreads > 0;
+        bool cont = atomicLoad!(MemoryOrder.raw)(busyThreads) > 0;
         stackLock.unlock();
 
         version (Posix) debug (PARALLEL_PRINTF) printf("scanBackground thread %d done\n", threadId);

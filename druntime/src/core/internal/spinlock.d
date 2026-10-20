@@ -32,7 +32,7 @@ shared struct SpinLock
             return;
         // Try to reduce the chance of another cas failure
         // TTAS lock (https://en.wikipedia.org/wiki/Test_and_test-and-set)
-        immutable step = 1 << contention;
+        immutable step = 1 << atomicLoad!(MemoryOrder.raw)(contention);
         while (true)
         {
             for (size_t n; atomicLoad!(MemoryOrder.raw)(val); n += step)
