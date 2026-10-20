@@ -17250,7 +17250,10 @@ bool checkSharedAccess(Expression e, Scope* sc, bool returnRef = false)
 
                     // https://issues.dlang.org/show_bug.cgi?id=23790
                     // https://github.com/dlang/dmd/issues/23233
-                    if (e.e1.type.isTypeStruct() || e.e1.type.isTypeClass())
+                    // Forming a reference to a field does not access its value.
+                    // A shared constructor has not published `this` yet.
+                    if ((allowRef || (sc.func && sc.func.isCtorDeclaration())) &&
+                        (e.e1.type.isTypeStruct() || e.e1.type.isTypeClass()))
                         return false;
                 }
 
