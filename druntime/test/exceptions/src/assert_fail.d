@@ -411,7 +411,10 @@ void testShared()
 
     auto s1 = shared Small(1);
     const s2 = shared Small(2);
-    test(cast() s1, cast() s2, "Small(1) != Small(2)");
+    // miniFormat's fallback for shared values needs a pointer cast from
+    // shared, which the CTFE interpreter rejects, so only test at runtime
+    if (!__ctfe)
+        test(s1, s2, "Small(1) != Small(2)");
 
     static struct Big
     {
@@ -420,7 +423,8 @@ void testShared()
 
     auto b1 = shared Big([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     const b2 = shared Big();
-    test(cast() b1, cast() b2, "Big([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) != Big([0, 0, 0, 0, 0, 0, 0, 0, 0, 0])");
+    if (!__ctfe)
+        test(b1, b2, "Big([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) != Big([0, 0, 0, 0, 0, 0, 0, 0, 0, 0])");
 
     // Sanity check: Big shouldn't be supported by atomicLoad
     import core.atomic : atomicLoad;
