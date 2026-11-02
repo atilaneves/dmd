@@ -134,18 +134,18 @@ struct GCBits
         }
         else
         {
+            import core.atomic : atomicLoad, cas;
             const pos = i >> BITS_SHIFT;
-            auto pdata = cast(shared)(data + pos);
+            auto pdata = cast(shared(wordtype)*)(data + pos);
             auto mask = BITS_1 << (i & BITS_MASK);
-            auto state = *pdata;
+            auto state = atomicLoad(*pdata);
             if (state & mask)
                 return state;
 
-            import core.atomic;
             auto newstate = state | mask;
             while (!cas(pdata, state, newstate))
             {
-                state = *pdata;
+                state = atomicLoad(*pdata);
                 if (state & mask)
                     return state;
                 newstate = state | mask;
