@@ -514,12 +514,6 @@ Optional!bool toBool(Expression _this)
         return typeof(return)(dim != 0);
     }
 
-    static Optional!bool assocArrayLiteralToBool(AssocArrayLiteralExp _this)
-    {
-        size_t dim = _this.keys.length;
-        return typeof(return)(dim != 0);
-    }
-
     static Optional!bool addrToBool(AddrExp _this)
     {
         if (isCtfeReferenceValid(_this.e1))
@@ -540,7 +534,7 @@ Optional!bool toBool(Expression _this)
         // Should probably match language spec instead and check for length
         case EXP.string_: return typeof(return)(true);
         case EXP.arrayLiteral: return arrayLiteralToBool(_this.isArrayLiteralExp());
-        case EXP.assocArrayLiteral: return assocArrayLiteralToBool(_this.isAssocArrayLiteralExp());
+        case EXP.assocArrayLiteral: return typeof(return)(true);
         case EXP.symbolOffset: return typeof(return)(true);
         // non-null delegate/function literal
         case EXP.delegate_:
@@ -675,6 +669,22 @@ void fillTupleExpExps(TupleExp _this, TupleDeclaration tup)
     }
 }
 
+/****************************************
+ * Check that the expression `e` is a noreturn type.
+ * Params:
+ *      e = Expression to check
+ * Returns:
+ *      true if the expression has a noreturn type and false otherwise.
+ */
+bool isNoreturnExpression(Expression e)
+{
+    if (e.type && e.type.isTypeNoreturn())
+        return true;
+    if (auto comma = e.isCommaExp())
+        return isNoreturnExpression(comma.e1) || isNoreturnExpression(comma.e2);
+    return false;
+}
+
 bool isLvalue(Expression _this)
 {
     static bool dotVarExpIsLvalue(DotVarExp _this)
@@ -765,7 +775,16 @@ bool isLvalue(Expression _this)
          * conversion to reference of static array is only allowed.
          */
         case EXP.string_, EXP.slice: return not_rvalue && (_this.type && _this.type.toBasetype().ty == Tsarray);
-        case EXP.question: return not_rvalue && _this.isCondExp().e1.isLvalue() && _this.isCondExp().e2.isLvalue();
+
+        case EXP.question:
+        {
+            auto ce = _this.isCondExp();
+            const bool e1Noreturn = isNoreturnExpression(ce.e1);
+            const bool e2Noreturn = isNoreturnExpression(ce.e2);
+            return not_rvalue && (e1Noreturn || ce.e1.isLvalue()) &&
+                (e2Noreturn || ce.e2.isLvalue()) && !(e1Noreturn && e2Noreturn);
+        }
+
         case EXP.array: return !( _this.rvalue || (_this.type && _this.type.toBasetype().ty == Tvoid));
 
         case EXP.vectorArray: return not_rvalue && _this.isVectorArrayExp().e1.isLvalue();
@@ -9568,9 +9587,6 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             if (checkNonAssignmentArrayOp(exp.e1))
                 return setError();
 
-            if (exp.e1.op == EXP.slice)
-                (cast(SliceExp)exp.e1).arrayop = true;
-
             // T[] op= ...
             if (exp.e2.implicitConvTo(exp.e1.type.nextOf()))
             {
@@ -12443,9 +12459,6 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             }
             else
             {
-                if (auto se = e1x.isSliceExp())
-                    se.arrayop = true;
-
                 e1x = e1x.expressionSemantic(sc);
             }
 
@@ -12988,7 +13001,6 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                     // convert e1 to e1[]
                     // e.g. e1[] = a[] + b[];
                     auto sle = new SliceExp(e1x.loc, e1x, null, null);
-                    sle.arrayop = true;
                     e1x = sle.expressionSemantic(sc);
                 }
                 else
@@ -13062,7 +13074,6 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                     }
                 }
                 auto sle = new SliceExp(e1x.loc, e1x, null, null);
-                sle.arrayop = true;
                 e1x = sle.expressionSemantic(sc);
             }
             if (e1x.op == EXP.error)
@@ -17664,10 +17675,16 @@ Expression toLvalue(Expression _this, Scope* sc, const(char)* action, Expression
         }
         // convert (econd ? e1 : e2) to *(econd ? &e1 : &e2)
         CondExp ecopy = cast(CondExp)(_this.copy());
-        ecopy.e1 = _this.e1.toLvalue(sc, action).addressOf();
-        checkAddressable(ecopy.e1, sc, "take address of");
-        ecopy.e2 = _this.e2.toLvalue(sc, action).addressOf();
-        checkAddressable(ecopy.e2, sc, "take address of");
+        if (!isNoreturnExpression(_this.e1))
+        {
+            ecopy.e1 = _this.e1.toLvalue(sc, action).addressOf();
+            checkAddressable(ecopy.e1, sc, "take address of");
+        }
+        if (!isNoreturnExpression(_this.e2))
+        {
+            ecopy.e2 = _this.e2.toLvalue(sc, action).addressOf();
+            checkAddressable(ecopy.e2, sc, "take address of");
+        }
         ecopy.type = _this.type.pointerTo();
         return new PtrExp(_this.loc, ecopy, _this.type);
 

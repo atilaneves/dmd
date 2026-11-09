@@ -1538,13 +1538,25 @@ Expression interpretStatement(UnionExp* pue, Statement s, InterState* istate)
             ex = bex;
         }
 
+        TypeFunction tf = cast(TypeFunction)istate.fd.type;
+        if (ex && !tf.isRef && (ex.type.toBasetype().ty == Tstruct || ex.type.toBasetype().ty == Tsarray))
+            ex = copyLiteral(ex).copy();
+
         Statement target = istate.gotoTarget;
         Expression ey = interpretStatement(s.finalbody, istate);
         while (CTFEExp.isGotoExp(ey))
         {
-            istate.start = istate.gotoTarget;
-            istate.gotoTarget = null;
-            ey = interpretStatement(s.finalbody, istate);
+            InterState istatex = *istate;
+            istatex.start = istate.gotoTarget;
+            istatex.gotoTarget = null;
+            Expression ez = interpretStatement(s.finalbody, &istatex);
+            if (istatex.start)
+            {
+                result = ey;
+                return;
+            }
+            *istate = istatex;
+            ey = ez;
         }
         istate.gotoTarget = target;
         if (CTFEExp.isCantExp(ey))
@@ -1943,7 +1955,7 @@ public:
                 {
                     // Create a CTFE pointer &var
                     auto ve = ctfeEmplaceExp!VarExp(e.loc, e.var);
-                    ve.type = elemtype;
+                    ve.type = e.var.type;
                     emplaceExp!(AddrExp)(pue, e.loc, ve, e.type);
                     result = pue.exp();
                     return;
@@ -2125,6 +2137,11 @@ public:
                     v.inuse++;
                     v._init = v._init.initializerSemantic(v._scope, v.type, INITinterpret, global.errorSink); // might not be run on aggregate members
                     v.inuse--;
+                }
+                if (v._init.isVoidInitializer())
+                {
+                    eSink.error(loc, "cannot read uninitialized variable `%s` in CTFE", v.toErrMsg());
+                    return CTFEExp.cantexp;
                 }
                 e = interpretInitializerExpression(v);
                 if (!e)
@@ -2724,6 +2741,24 @@ public:
         }
     }
 
+    /* Truncate `e` to the width of bitfield `bf`
+     */
+    private static Expression truncateBitField(Expression e, BitFieldDeclaration bf)
+    {
+        auto ival = e.isIntegerExp();
+        if (!ival)
+            return e;
+        sinteger_t value = ival.toInteger();
+        if (bf.type.isUnsigned())
+            value &= ~0UL >> (64 - bf.fieldWidth); // zero extra bits
+        else
+        {   // sign extend extra bits
+            value = value << (64 - bf.fieldWidth);
+            value = value >> (64 - bf.fieldWidth);
+        }
+        return ctfeEmplaceExp!IntegerExp(e.loc, value, e.type);
+    }
+
     override void visit(StructLiteralExp e)
     {
         debug (LOG)
@@ -2775,6 +2810,8 @@ public:
                 ex = interpretRegion(exp, istate);
                 if (exceptionOrCant(ex))
                     return;
+                if (auto bf = v.isBitFieldDeclaration())
+                    ex = truncateBitField(ex, bf);
                 if ((v.type.ty != ex.type.ty) && v.type.ty == Tsarray)
                 {
                     // Block assignment from inside struct literals
@@ -2905,6 +2942,8 @@ public:
                         ex = interpretRegion(ex, istate);
                         if (exceptionOrCant(ex))
                             return;
+                        if (auto bf = sd.fields[i].isBitFieldDeclaration())
+                            ex = truncateBitField(ex, bf);
                         (*exps)[i] = ex;
                     }
                 }
@@ -3620,6 +3659,23 @@ public:
                     if (oldval == pue.exp())
                         oldval = pue.copy();
                 }
+                if (e.e1.type.toBasetype().ty == Tvector)
+                {
+                    eSink.error(e.loc, "vector operation `%s` is not supported at compile time", e.toErrMsg());
+                    result = CTFEExp.cantexp;
+                    return;
+                }
+                if (e.op == EXP.leftShiftAssign || e.op == EXP.rightShiftAssign || e.op == EXP.unsignedRightShiftAssign)
+                {
+                    const sinteger_t i2 = newval.toInteger();
+                    const uinteger_t sz = e.e1.type.size() * 8;
+                    if (i2 < 0 || i2 >= sz)
+                    {
+                        eSink.error(e.loc, "shift assign by %lld is outside the range `0..%llu`", i2, cast(ulong)sz - 1);
+                        result = CTFEExp.cantexp;
+                        return;
+                    }
+                }
 
                 newval = (*fp)(e.loc, e.e1.type, oldval, newval).copy();
             }
@@ -3682,14 +3738,27 @@ public:
             if (exceptionOrCant(e1))
                 return;
 
-            if (oldlen != 0) // Get the old array literal.
-                oldval = interpretRegion(e1, istate);
-            UnionExp utmp = void;
-            oldval = resolveSlice(oldval, &utmp);
+            if (newlen < oldlen)
+            {
+                auto lwr = ctfeEmplaceExp!IntegerExp(e.loc, 0, Type.tsize_t);
+                auto upr = ctfeEmplaceExp!IntegerExp(e.loc, newlen, Type.tsize_t);
+                auto se = ctfeEmplaceExp!SliceExp(e.loc, e1, lwr, upr);
+                se.type = t;
+                newval = interpretRegion(se, istate);
+                if (exceptionOrCant(newval))
+                    return;
+            }
+            else
+            {
+                if (oldlen != 0) // Get the old array literal.
+                    oldval = interpretRegion(e1, istate);
+                UnionExp utmp = void;
+                oldval = resolveSlice(oldval, &utmp);
 
-            newval = changeArrayLiteralLength(pue, e.loc, cast(TypeArray)t, oldval, oldlen, newlen);
-            if (newval == pue.exp())
-                newval = pue.copy();
+                newval = changeArrayLiteralLength(pue, e.loc, cast(TypeArray)t, oldval, oldlen, newlen);
+                if (newval == pue.exp())
+                    newval = pue.copy();
+            }
 
             e1 = assignToLvalue(e, e1, newval, istate);
             if (exceptionOrCant(e1))
@@ -3715,6 +3784,9 @@ public:
                 return;
             if (newval == pue.exp())
                 newval = pue.copy();
+            if (auto dve = e1.isDotVarExp())
+                if (auto bf = dve.var.isBitFieldDeclaration())
+                    newval = truncateBitField(newval, bf);
 
             // Determine the return value
             if (goal == CTFEGoal.LValue) // https://issues.dlang.org/show_bug.cgi?id=14371
@@ -3845,21 +3917,6 @@ public:
 
             payload = &(*sle.elements)[fieldi];
             oldval = *payload;
-            if (auto ival = newval.isIntegerExp())
-            {
-                if (auto bf = v.isBitFieldDeclaration())
-                {
-                    sinteger_t value = ival.toInteger();
-                    if (bf.type.isUnsigned())
-                        value &= (1L << bf.fieldWidth) - 1; // zero extra bits
-                    else
-                    {   // sign extend extra bits
-                        value = value << (64 - bf.fieldWidth);
-                        value = value >> (64 - bf.fieldWidth);
-                    }
-                    ival.setInteger(value);
-                }
-            }
         }
         else if (auto ie = e1.isIndexExp())
         {
@@ -3968,7 +4025,10 @@ public:
         else
         {
             // e1 has its own payload, so we have to create a new literal.
-            if (wantCopy)
+            // Static arrays are value types: assigning one must deep-copy the
+            // payload, otherwise both variables alias the same literal and
+            // mutating one is visible through the other.
+            if (wantCopy || t1b.ty == Tsarray)
                 newval = copyLiteral(newval).copy();
 
             if (t1b.ty == Tsarray && e.op == EXP.construct && e.e2.isLvalue())
@@ -5942,9 +6002,10 @@ public:
             e1 = resolveSlice(e1);
 
         auto tobt = e.to.toBasetype();
-        if (tobt.ty == Tbool && (e1.type.ty == Tpointer || e1.type.ty == Tclass))
+        if (tobt.ty == Tbool && (e1.type.ty == Tpointer || e1.type.ty == Tclass || e1.type.ty == Tdelegate ||
+                                 e1.type.ty == Tarray || e1.type.ty == Taarray))
         {
-            emplaceExp!(IntegerExp)(pue, e.loc, e1.op != EXP.null_, e.to);
+            emplaceExp!(IntegerExp)(pue, e.loc, isTrueBool(e1), e.to);
             result = pue.exp();
             return;
         }

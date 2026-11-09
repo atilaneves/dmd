@@ -3,7 +3,7 @@
 /*
 TEST_OUTPUT:
 ---
-compilable/interpret3.d(6361): Deprecation: identity comparison of static arrays implicitly coerces them to slices, which are compared by reference
+compilable/interpret3.d(6435): Deprecation: identity comparison of static arrays implicitly coerces them to slices, which are compared by reference
 ---
 */
 
@@ -1098,7 +1098,54 @@ static assert(bug8644());
 struct A6159 {}
 
 static assert({ return A6159.init is A6159.init; }());
-static assert({ return [1] is [1]; }());
+static assert({ return [1] !is [1]; }());
+
+/**************************************************/
+// https://github.com/dlang/dmd/issues/24016
+
+bool test24016()
+{
+    int[] a = [1, 1];
+    int[] b = [1, 1];
+    assert(a !is b);
+    assert(a[0 .. 1] !is a[1 .. 2]);
+    double[] d = [double.nan];
+    assert(d is d);
+    struct S { int[] p; double[1] q; }
+    assert(S(a, [double.nan]) is S(a, [double.nan]));
+    assert(S(a, [1]) !is S(b, [1]));
+
+    int[int] x = [1: 2];
+    int[int] y = [1: 2];
+    assert(x !is y);
+    y = x;
+    x[2] = 2;
+    assert(x is y);
+    const(int[int]) cx = x;
+    const(int[int]) cy = x;
+    assert(cx is cy);
+
+    int[] e = [];
+    assert(e is null);
+    assert(a[0 .. 0] !is null);
+    int[0] sa;
+    int[] f = sa;
+    assert(f !is null);
+
+    int[] g = [1, 2, 3];
+    int[] h = g;
+    g.length = 2;
+    g[0] = 5;
+    assert(h[0] == 5);
+    g.length = 0;
+    assert(g !is null);
+    int[] k = h[1 .. 3];
+    k.length = 1;
+    k[0] = 9;
+    assert(h[1] == 9);
+    return true;
+}
+static assert(test24016());
 
 /**************************************************/
 // https://issues.dlang.org/show_bug.cgi?id=5685
@@ -2273,6 +2320,20 @@ static assert({
     return 6;
 }() == 6);
 
+// https://github.com/dlang/dmd/issues/24148
+static assert({
+    int[12] x;
+    int* p = &x[10];
+    int n = -4;
+    p += n;
+    assert(p == &x[6]);
+    p = p + n;
+    assert(p == &x[2]);
+    p -= n;
+    assert(p == &x[6]);
+    return 6;
+}() == 6);
+
 static assert({
     char[12] x;
     const(char)* p = "abcdef";
@@ -3224,6 +3285,19 @@ int ctfeSort6250()
 }
 
 static assert(ctfeSort6250() == 57);
+
+/**************************************************/
+// append through a pointer to a local array
+
+int[] ptrAppend()
+{
+    int[] a = [0];
+    int[]* p = &a;
+    *p ~= 1;
+    *p ~= [2];
+    return *p ~ 3;
+}
+static assert(ptrAppend() == [0, 1, 2, 3]);
 
 /**************************************************/
 
@@ -7078,6 +7152,37 @@ static assert(()
 
     return 1;
 }());
+
+/**************************************************/
+// https://github.com/dlang/dmd/issues/24188
+
+bool test24188()
+{
+    static struct S { int a; }
+    static S f() { S s; scope(exit) s.a = 9; return s; }
+    assert(f().a == 0);
+    static int[2] g() { int[2] a; scope(exit) a[0] = 9; return a; }
+    assert(g() == [0, 0]);
+    static ref S r(return ref S s) { scope(exit) s.a++; return s; }
+    S s;
+    r(s).a = 5;
+    assert(s.a == 5);
+
+    int c;
+    switch (c)
+    {
+    case 1:
+        c += 10;
+        break;
+    case 0:
+        try { c = 1; } finally { goto case 1; }
+    default:
+        c = -1;
+    }
+    assert(c == 11);
+    return true;
+}
+static assert(test24188());
 
 /**************************************************/
 // https://issues.dlang.org/show_bug.cgi?id=11627

@@ -25,6 +25,7 @@ import dmd.declaration;
 import dmd.dmodule;
 import dmd.dscope;
 import dmd.dstruct;
+import dmd.cond : Include;
 import dmd.dsymbol;
 import dmd.dsymbolsem;
 import dmd.dtemplate;
@@ -2587,6 +2588,8 @@ private bool expNeedsDtor(Expression exp)
  * for `inline`/`__forceinline` C functions that turn out to be genuinely
  * unreferenced, and marks them to skip codegen.
  *
+ * A candidate counts as referenced only via code outside the candidate set.
+ *
  * Params:
  *   modules = every module in the program
  */
@@ -2603,22 +2606,39 @@ public void scanImportCInlineUsage(Modules* modules)
     if (!candidates.length)
         return;
 
-    scope v = new ImportCInlineUsageVisitor();
+    foreach (fd; candidates)
+        fd.isImportCInlineCandidate = true;
+
+    FuncDeclaration[] worklist;
+    scope v = new ImportCInlineUsageVisitor(&worklist);
+
     foreach (m; *modules)
         visitDsymbolTree(m, v);
 
+    while (worklist.length)
+    {
+        FuncDeclaration fd = worklist[$ - 1];
+        worklist = worklist[0 .. $ - 1];
+        if (fd.fbody)
+            fd.fbody.accept(v);
+    }
+
     foreach (fd; candidates)
+    {
         if (!fd.importCInlineReferenced)
             fd.skipCodegen = true;
+        fd.isImportCInlineCandidate = false;
+    }
 }
 
 /// Walk a Dsymbol tree, visiting every function body and variable
 /// initializer with v, recursing into anything that can hold either.
+/// Skips a candidate's own body - see scanImportCInlineUsage.
 private void visitDsymbolTree(Dsymbol s, ImportCInlineUsageVisitor v)
 {
     if (auto fd = s.isFuncDeclaration())
     {
-        if (fd.fbody)
+        if (fd.fbody && !fd.isImportCInlineCandidate)
             fd.fbody.accept(v);
         return;
     }
@@ -2628,10 +2648,29 @@ private void visitDsymbolTree(Dsymbol s, ImportCInlineUsageVisitor v)
             ei.exp.accept(v);
         return;
     }
+    if (s.isTemplateDeclaration()) // instances are walked as members of their module
+        return;
     if (auto ad = s.isAttribDeclaration())
     {
-        if (ad.decl)
-            foreach (s2; *ad.decl)
+        // Only follow what semantic analysis has expanded; excluded branches and unexpanded bodies
+        // were never analysed and may hold null expressions (e.g. an enum member without a value)
+        Dsymbols* d = ad.decl;
+        switch (ad.dsym)
+        {
+            case DSYM.conditionalDeclaration:
+            case DSYM.staticIfDeclaration:
+                auto cd = cast(ConditionalDeclaration) cast(void*) ad;
+                d = cd.condition.inc == Include.yes ? cd.decl : cd.condition.inc == Include.no ? cd.elsedecl : null;
+                break;
+            case DSYM.staticForeachDeclaration:
+                auto sfd = cast(StaticForeachDeclaration) cast(void*) ad;
+                d = sfd.cached ? sfd.cache : null;
+                break;
+            default:
+                break;
+        }
+        if (d)
+            foreach (s2; *d)
                 visitDsymbolTree(s2, v);
         return;
     }
@@ -2647,6 +2686,14 @@ private void visitDsymbolTree(Dsymbol s, ImportCInlineUsageVisitor v)
 private extern (C++) final class ImportCInlineUsageVisitor : SemanticTimeTransitiveVisitor
 {
     alias visit = SemanticTimeTransitiveVisitor.visit;
+
+    private FuncDeclaration[]* worklist;
+
+    // extern (D): a pointer to a D dynamic array has no C++ ABI mapping.
+    extern (D) this(FuncDeclaration[]* worklist)
+    {
+        this.worklist = worklist;
+    }
 
     // VarExp/SymOffExp have no dedicated override point in this visitor
     // hierarchy, so this catches them (and everything else) via their
@@ -2672,7 +2719,11 @@ private extern (C++) final class ImportCInlineUsageVisitor : SemanticTimeTransit
 
     private void mark(Declaration d)
     {
-        if (auto fd = d.isFuncDeclaration())
-            fd.importCInlineReferenced = true;
+        auto fd = d.isFuncDeclaration();
+        if (!fd || fd.importCInlineReferenced)
+            return;
+        fd.importCInlineReferenced = true;
+        if (fd.isImportCInlineCandidate)
+            *worklist ~= fd;
     }
 }
