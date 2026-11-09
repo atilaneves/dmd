@@ -16,10 +16,11 @@ case $CIRCLE_NODE_INDEX in
     1) MODEL=32 ;; # broken - https://issues.dlang.org/show_bug.cgi?id=19116
 esac
 
-# sometimes $CIRCLE_PR_NUMBER is not defined
-# extract it from $CIRCLE_PULL_REQUEST
-if [ -z "${CIRCLE_PR_NUMBER:-}" ] && [ -n "${CIRCLE_PULL_REQUEST:-}" ]; then
-    export CIRCLE_PR_NUMBER=${CIRCLE_PULL_REQUEST#https://github.com/dlang/dmd/pull/}
+pr_repository="${CIRCLE_PROJECT_USERNAME:-dlang}/$CIRCLE_PROJECT_REPONAME"
+if [ -n "${CIRCLE_PULL_REQUEST:-}" ]; then
+    export CIRCLE_PR_NUMBER=${CIRCLE_PR_NUMBER:-${CIRCLE_PULL_REQUEST##*/}}
+    pr_repository=${CIRCLE_PULL_REQUEST#https://github.com/}
+    pr_repository=${pr_repository%/pull/*}
 fi
 
 # clone druntime and phobos
@@ -77,12 +78,8 @@ setup_repos() {
     if [ -z "${CIRCLE_PR_NUMBER:-}" ]; then
         # no PR
         base_branch=$CIRCLE_BRANCH
-    elif [ -z "${CIRCLE_PR_REPONAME:-}" ]; then
-        # PR originating from the official dlang repo
-        base_branch=$CIRCLE_BRANCH
     else
-        # PR from a fork
-        base_branch=$( (curl -fsSL https://api.github.com/repos/dlang/$CIRCLE_PROJECT_REPONAME/pulls/$CIRCLE_PR_NUMBER || echo) | jq -r '.base.ref')
+        base_branch=$( (curl -fsSL "https://api.github.com/repos/$pr_repository/pulls/$CIRCLE_PR_NUMBER" || echo) | jq -r '.base.ref // empty')
         # set a default in case we run into rate limit restrictions
         base_branch=${base_branch:-master}
     fi
@@ -90,7 +87,7 @@ setup_repos() {
     # merge testee PR with base branch (master) before testing
     if [ -n "${CIRCLE_PR_NUMBER:-}" ]; then
         local head=$(git rev-parse HEAD)
-        git remote add upstream "https://github.com/dlang/$CIRCLE_PROJECT_REPONAME.git"
+        git remote add upstream "https://github.com/$pr_repository.git"
         git fetch -q upstream "+refs/pull/${CIRCLE_PR_NUMBER}/merge:"
         git checkout -f FETCH_HEAD
     fi
