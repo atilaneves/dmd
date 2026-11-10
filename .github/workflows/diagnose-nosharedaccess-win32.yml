@@ -1,0 +1,46 @@
+name: Diagnose nosharedaccess Windows x86 C preprocessing
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: Same-compiler errno.c flag comparison
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      MODEL: 32
+      N: 2
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Azure-matched host D compiler
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: dmd-2.113.1
+
+      - name: Set up 32-bit MSVC environment
+        shell: pwsh
+        run: ./.github/scripts/setup_msvc.ps1 -Arch x86
+
+      - name: Build DMD only
+        shell: bash
+        run: |
+          set -euxo pipefail
+          make -j2 MODEL=32 HOST_DMD="$DMD" HOST_DFLAGS="-L-LARGEADDRESSAWARE" ENABLE_RELEASE=1 ENABLE_ASSERTS=1 dmd
+
+      - name: Compare errno.c preview flag on and off
+        shell: pwsh
+        run: ./.github/scripts/diagnose_nosharedaccess_win32.ps1
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nosharedaccess-win32-diagnostic
+          path: diagnostics/nosharedaccess-win32/
+          if-no-files-found: error
+          retention-days: 7
