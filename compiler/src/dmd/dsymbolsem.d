@@ -1084,6 +1084,7 @@ private bool funcDeclEquals(const FuncDeclaration _this, const Dsymbol s)
 
     return faf1.toParent().equals(faf2.toParent()) &&
            faf1.ident.equals(faf2.ident) &&
+           faf1.localNum == faf2.localNum &&
            faf1.type.equals(faf2.type);
 }
 
@@ -3428,12 +3429,6 @@ private extern(C++) final class DsymbolSemanticVisitor : Visitor
                     // https://issues.dlang.org/show_bug.cgi?id=14166
                     // Don't run CTFE for the temporary variables inside typeof
                     dsym._init = dsym._init.initializerSemantic(sc, dsym.type, sc.intypeof == 1 ? INITnointerpret : INITinterpret, global.errorSink);
-                    auto init_err = dsym._init.isExpInitializer();
-                    if (init_err && init_err.exp.op == EXP.showCtfeContext)
-                    {
-                        init_err.exp = ErrorExp.get();
-                        eSink.errorSupplemental(dsym.loc, "compile time context created here");
-                    }
                 }
             }
             else if (parent.isAggregateDeclaration())

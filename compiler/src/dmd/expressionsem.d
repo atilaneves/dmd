@@ -3321,7 +3321,7 @@ void checkOverriddenDtor(FuncDeclaration f, Scope* sc, Loc loc,
 }
 
 /********************************************
- * Print the reason why `fd` was inferred `@system` as a supplemental error
+ * Print the reason why `fd` failed to infer an attribute as a supplemental error
  * Params:
  *   fd = function to check
  *   maxDepth = up to how many functions deep to report errors
@@ -3330,6 +3330,13 @@ void checkOverriddenDtor(FuncDeclaration f, Scope* sc, Loc loc,
  *   eSink = where the error messages go
  */
 public void errorSupplementalInferredAttr(FuncDeclaration fd, int maxDepth, bool deprecation, STC stc, ErrorSink eSink)
+{
+    FuncDeclarations visited;
+    errorSupplementalInferredAttr(fd, maxDepth, deprecation, stc, eSink, visited);
+}
+
+private void errorSupplementalInferredAttr(FuncDeclaration fd, int maxDepth, bool deprecation,
+    STC stc, ErrorSink eSink, ref FuncDeclarations visited)
 {
     auto errorFunc = deprecation ? &eSink.deprecationSupplemental : &eSink.errorSupplemental;
 
@@ -3373,8 +3380,19 @@ public void errorSupplementalInferredAttr(FuncDeclaration fd, int maxDepth, bool
     {
         if (maxDepth > 0)
         {
+            // Include the starting declaration so the closing link is reported
+            // only once. Names can coincide for distinct template instances.
+            visited.push(fd);
+            foreach (previous; visited[])
+            {
+                if (s.fd is previous)
+                {
+                    errorFunc(s.loc, "which calls `%s`, completing a cycle in the diagnostic chain", s.fd.toErrMsg());
+                    return;
+                }
+            }
             errorFunc(s.loc, "which calls `%s`", s.fd.toErrMsg());
-            errorSupplementalInferredAttr(s.fd, maxDepth - 1, deprecation, stc, eSink);
+            errorSupplementalInferredAttr(s.fd, maxDepth - 1, deprecation, stc, eSink, visited);
         }
     }
     else
@@ -4184,6 +4202,42 @@ private Expression rewriteOpAssign(BinExp exp)
         Expression e = opAssignToOp(exp.loc, exp.op, e1, exp.e2);
         e = new AssignExp(exp.loc, elvalue, e);
         e = new CommaExp(exp.loc, new DeclarationExp(ale.loc, tmp), e);
+        return e;
+    }
+}
+
+/*********************
+ * Rewrite v.field op= e2
+ * Params:
+ *	exp = the bitfield op assignment
+ *	bf = the bit field declaration
+ * Returns:
+ *	rewritten exp
+ */
+private Expression rewriteBitFieldOpAssign(BinExp exp, BitFieldDeclaration bf)
+{
+    DotVarExp dve = exp.e1.isDotVarExp();
+    if (dve.e1.isVarExp())
+    {
+        // dve.var = dve.var op e2
+        Expression e = opAssignToOp(exp.loc, exp.op, dve, exp.e2);
+        e = new AssignExp(exp.loc, dve.syntaxCopy(), e);
+        return e;
+    }
+    else
+    {
+        // ref tmp = dve.e1;
+        auto tmp = copyToTemp(STC.ref_, "__bitfieldptr", dve.e1);
+        // tmp.bf
+        Expression e1 = new DotVarExp(dve.loc, new VarExp(dve.loc, tmp), bf);
+	// tmp.bf
+        Expression elvalue = e1.syntaxCopy();
+        // tmp.bf op e2
+        Expression e = opAssignToOp(exp.loc, exp.op, e1, exp.e2); //
+        // tmp.bf = tmp.bf op e2
+        e = new AssignExp(exp.loc, elvalue, e);
+	// (ref tmp = dve.e1) , (tmp.bf = tmp.bf op e2)
+        e = new CommaExp(exp.loc, new DeclarationExp(dve.loc, tmp), e);
         return e;
     }
 }
@@ -9573,15 +9627,27 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         if (Expression e = exp.opOverloadBinaryAssign(sc, aliasThisStop))
             return setOpOverloadAssign(e);
 
-        Expression e;
         if (exp.e1.op == EXP.arrayLength)
         {
             // arr.length op= e2;
-            e = rewriteOpAssign(exp);
+            Expression e = rewriteOpAssign(exp);
             e = e.expressionSemantic(sc);
             result = e;
             return;
         }
+
+        if (BitFieldDeclaration bf = exp.e1.isBitField())
+	{
+	    /* If lvalue is a bit field, because integral promotions interfere with bit field operations,
+	     * decompose it into two expressions
+	     *   v.field op= e2
+	     */
+            Expression e = rewriteBitFieldOpAssign(exp, bf);
+            e = e.expressionSemantic(sc);
+            result = e;
+            return;
+	}
+
         if (exp.e1.op == EXP.slice || exp.e1.type.isStaticOrDynamicArray())
         {
             if (checkNonAssignmentArrayOp(exp.e1))
@@ -9657,7 +9723,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         if (exp.e1.op == EXP.error || exp.e2.op == EXP.error)
             return setError();
 
-        e = exp.checkOpAssignTypes(sc);
+        Expression e = exp.checkOpAssignTypes(sc);
         if (e.op == EXP.error)
         {
             result = e;
@@ -17681,17 +17747,25 @@ Expression toLvalue(Expression _this, Scope* sc, const(char)* action, Expression
         }
         // convert (econd ? e1 : e2) to *(econd ? &e1 : &e2)
         CondExp ecopy = cast(CondExp)(_this.copy());
-        if (!isNoreturnExpression(_this.e1))
+        ecopy.type = _this.type.pointerTo();
+        if (isNoreturnExpression(_this.e1))
+        {
+            ecopy.e1 = specialNoreturnCast(ecopy.e1, ecopy.type);
+        }
+        else
         {
             ecopy.e1 = _this.e1.toLvalue(sc, action).addressOf();
             checkAddressable(ecopy.e1, sc, "take address of");
         }
-        if (!isNoreturnExpression(_this.e2))
+        if (isNoreturnExpression(_this.e2))
+        {
+            ecopy.e2 = specialNoreturnCast(ecopy.e2, ecopy.type);
+        }
+        else
         {
             ecopy.e2 = _this.e2.toLvalue(sc, action).addressOf();
             checkAddressable(ecopy.e2, sc, "take address of");
         }
-        ecopy.type = _this.type.pointerTo();
         return new PtrExp(_this.loc, ecopy, _this.type);
 
     }

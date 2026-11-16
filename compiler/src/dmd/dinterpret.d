@@ -114,6 +114,11 @@ public Expression ctfeInterpret(Expression e)
         tee.generateUncaughtError();
         result = CTFEExp.cantexp;
     }
+    else if (result.op == EXP.showCtfeContext)
+    {
+        global.errorSink.errorSupplemental(e.loc, "compile time context created here");
+        result = CTFEExp.cantexp;
+    }
     else
     {
         timeTraceBeginEvent(TimeTraceEventType.ctfeCopy);
@@ -7057,7 +7062,7 @@ private Expression interpret_aaDel(UnionExp* pue, InterState* istate, Expression
     if (exceptionOrCantInterpret(index))
         return index;
     if (agg.op == EXP.null_)
-        return CTFEExp.voidexp; //???
+        return IntegerExp.createBool(false);
 
     AssocArrayLiteralExp aae = agg.isAssocArrayLiteralExp();
     Expressions* keysx = aae.keys;
