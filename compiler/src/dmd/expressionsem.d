@@ -1869,6 +1869,37 @@ Expression getField(StructLiteralExp sle, Type type, uint offset)
 }
 
 
+/**************************************
+ * Runs semantic on dimension `dim` of `ae` with `$` in scope.
+ * Params:
+ *      sc = scope
+ *      ae = array expression `e` is an argument of
+ *      e = argument expression, or `null`
+ *      dim = dimension of `e` in `ae`
+ *      pe0 = gets the `$` variable declaration appended, if `$` was used
+ * Returns:
+ *      `e` after semantic, `ae` if `e` is `null`, or ErrorExp
+ */
+Expression dollarSemantic(Scope* sc, ArrayExp ae, Expression e, size_t dim, ref Expression pe0)
+{
+    if (!e)
+        return ae;
+
+    // Create scope for '$' variable for this dimension
+    auto sym = new ArrayScopeSymbol(sc, ae);
+    sym.parent = sc.scopesym;
+    sym.dollarDim = dim;
+    sc = sc.push(sym);
+
+    e = e.expressionSemantic(sc);
+    e = resolveProperties(sc, e);
+
+    if (sym.dollarVar && sc.func)
+        pe0 = Expression.combine(pe0, new DeclarationExp(ae.loc, sym.dollarVar).expressionSemantic(sc));
+    sc.pop();
+
+    return e.checkValue() ? ErrorExp.get() : e;
+}
 
 /**************************************
  * Runs semantic on ae.arguments. Declares temporary variables
@@ -1877,10 +1908,8 @@ Expression getField(StructLiteralExp sle, Type type, uint offset)
 Expression resolveOpDollar(Scope* sc, ArrayExp ae, out Expression pe0)
 {
     auto eSink = global.errorSink;
-    assert(!ae.lengthVar);
     AggregateDeclaration ad = isAggregate(ae.e1.type);
     Dsymbol slice = search_function(ad, Id.opSlice);
-    //printf("slice = %s %s\n", slice.kind(), slice.toChars());
     Expression fallback()
     {
         if (ae.arguments.length == 1)
@@ -1894,29 +1923,9 @@ Expression resolveOpDollar(Scope* sc, ArrayExp ae, out Expression pe0)
             pe0 = extractOpDollarSideEffect(sc, ae);
 
         if (e.op == EXP.interval && !(slice && slice.isTemplateDeclaration()))
-        {
             return fallback();
-        }
-        //printf("[%d] e = %s\n", i, e.toChars());
 
-        // Create scope for '$' variable for this dimension
-        auto sym = new ArrayScopeSymbol(sc, ae);
-        sym.parent = sc.scopesym;
-        sc = sc.push(sym);
-        ae.lengthVar = null; // Create it only if required
-        ae.currentDimension = i; // Dimension for $, if required
-
-        e = e.expressionSemantic(sc);
-        e = resolveProperties(sc, e);
-
-        if (ae.lengthVar && sc.func)
-        {
-            // If $ was used, declare it now
-            Expression de = new DeclarationExp(ae.loc, ae.lengthVar);
-            de = de.expressionSemantic(sc);
-            pe0 = Expression.combine(pe0, de);
-        }
-        sc = sc.pop();
+        e = dollarSemantic(sc, ae, e, i, pe0);
 
         if (auto ie = e.isIntervalExp())
         {
@@ -1938,70 +1947,12 @@ Expression resolveOpDollar(Scope* sc, ArrayExp ae, out Expression pe0)
             e = new CallExp(ae.loc, e, fargs);
             e = e.expressionSemantic(sc);
         }
-
-        if (!e.type)
-        {
-            eSink.error(ae.loc, "`%s` has no value", e.toErrMsg());
-            e = ErrorExp.get();
-        }
         if (e.op == EXP.error)
             return e;
 
         (*ae.arguments)[i] = e;
     }
     return ae;
-}
-
-/**************************************
- * Runs semantic on se.lwr and se.upr. Declares a temporary variable
- * if '$' was used.
- * Returns:
- *      ae, or ErrorExp if errors occurred
- */
-Expression resolveOpDollar(Scope* sc, ArrayExp ae, IntervalExp ie, ref Expression pe0)
-{
-    //assert(!ae.lengthVar);
-    if (!ie)
-        return ae;
-
-    VarDeclaration lengthVar = ae.lengthVar;
-    bool errors = false;
-
-    // create scope for '$'
-    auto sym = new ArrayScopeSymbol(sc, ae);
-    sym.parent = sc.scopesym;
-    sc = sc.push(sym);
-
-    Expression sem(Expression e)
-    {
-        e = e.expressionSemantic(sc);
-        e = resolveProperties(sc, e);
-        if (!e.type)
-        {
-            auto eSink = global.errorSink;
-            eSink.error(ae.loc, "`%s` has no value", e.toErrMsg());
-            errors = true;
-        }
-        return e;
-    }
-
-    ie.lwr = sem(ie.lwr);
-    ie.upr = sem(ie.upr);
-
-    if (ie.lwr.isErrorExp() || ie.upr.isErrorExp())
-        errors = true;
-
-    if (lengthVar != ae.lengthVar && sc.func)
-    {
-        // If $ was used, declare it now
-        Expression de = new DeclarationExp(ae.loc, ae.lengthVar);
-        de = de.expressionSemantic(sc);
-        pe0 = Expression.combine(pe0, de);
-    }
-
-    sc = sc.pop();
-
-    return errors ? ErrorExp.get() : ae;
 }
 
 /******************************
@@ -2244,15 +2195,54 @@ Expression checkNoreturnVarAccess(Expression exp)
         ce.e2 = checkNoreturnVarAccess(ce.e2);
         return ce;
 
+    case EXP.arrayLiteral:
+        auto ale = exp.isArrayLiteralExp();
+        if (ale.basis)
+            ale.basis = checkNoreturnVarAccess(ale.basis);
+        if (ale.elements)
+        {
+            foreach (ref el; (*ale.elements)[])
+            {
+                if (el)
+                    el = checkNoreturnVarAccess(el);
+            }
+        }
+        return ale;
+
+    case EXP.structLiteral:
+        auto sle = exp.isStructLiteralExp();
+        if (sle.elements)
+        {
+            foreach (ref el; (*sle.elements)[])
+            {
+                if (el)
+                    el = checkNoreturnVarAccess(el);
+            }
+        }
+        return sle;
+
     default:
-        if (!exp.type || !exp.type.isTypeNoreturn())
+        if (!exp.type)
             return exp;
+        if (!exp.type.isTypeNoreturn())
+        {
+            // Non-empty static arrays of noreturn (e.g. noreturn[1], noreturn[1][2])
+            // are uninhabited just like noreturn itself, whereas noreturn[0] is empty/valid.
+            Type tb = exp.type.toBasetype();
+            if (!tb.isTypeSArray() || !tb.baseElemOf().isTypeNoreturn())
+                return exp;
+            for (auto tsa = tb.isTypeSArray(); tsa; tsa = tsa.next.toBasetype().isTypeSArray())
+            {
+                if (tsa.dim.toInteger() == 0)
+                    return exp;
+            }
+        }
 
         auto msg = new StringExp(exp.loc, "Accessed expression of type `noreturn`");
         msg.type = Type.tstring;
         auto ae = new AssertExp(exp.loc, IntegerExp.literal!0, msg);
         ae.loweredFrom = exp;
-        ae.type = exp.type;
+        ae.type = exp.type.isTypeNoreturn() ? exp.type : Type.tnoreturn;
         return ae;
     }
 }
@@ -6309,6 +6299,14 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
             return setError();
         }
 
+        if (e.basis)
+            e.basis = checkNoreturnVarAccess(e.basis);
+        foreach (ref el; (*e.elements)[])
+        {
+            if (el)
+                el = checkNoreturnVarAccess(el);
+        }
+
         if (global.params.useTypeInfo && Type.dtypeinfo)
             semanticTypeInfo(sc, e.type);
 
@@ -6396,6 +6394,17 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
         Type tvalue = arrayExpressionToCommonType(sc, *e.values);
         if (tkey is null || tvalue is null)
             return setError();
+
+        foreach (ref el; (*e.values)[])
+        {
+            if (el)
+                el = checkNoreturnVarAccess(el);
+        }
+        foreach (ref el; (*e.keys)[])
+        {
+            if (el)
+                el = checkNoreturnVarAccess(el);
+        }
 
         e.type = new TypeAArray(tvalue, tkey);
         e.type = e.type.typeSemantic(e.loc, sc);
@@ -7366,6 +7375,8 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 Expression e = (*exp.arguments)[0];
                 e = e.implicitCastTo(sc, tb);
                 (*exp.arguments)[0] = e;
+                if (checkNewEscape(*sc, e, false))
+                    return setError();
             }
             else
             {
@@ -12393,7 +12404,6 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
 
                 Expression e0 = null;
                 Expression ae1save = ae.e1;
-                ae.lengthVar = null;
 
                 Type t1b = ae.e1.type.toBasetype();
                 AggregateDeclaration ad = isAggregate(t1b);
@@ -12412,6 +12422,9 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                     if (res.op == EXP.error)
                         return setResult(res);
                     exp.e2 = res;
+
+                    if (auto ie1 = ae.e1.isIndexExp())
+                        ae.e1 = ie1.revertIndexAssignToRvalues(sc);
 
                     /* Rewrite (a[arguments] = e2) as:
                      *      a.opIndexAssign(e2, arguments)
@@ -12434,7 +12447,7 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 if (maybeSlice && search_function(ad, Id.opSliceAssign))
                 {
                     // Deal with $
-                    res = resolveOpDollar(sc, ae, ie, e0);
+                    res = dollarSemantic(sc, ae, ie, 0, e0);
                     if (res.op == EXP.error)
                         return setResult(res);
 
@@ -12443,6 +12456,9 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                         return setResult(res);
 
                     exp.e2 = res;
+
+                    if (auto ie1 = ae.e1.isIndexExp())
+                        ae.e1 = ie1.revertIndexAssignToRvalues(sc);
 
                     /* Rewrite (a[i..j] = e2) as:
                      *      a.opSliceAssign(e2, i, j)
@@ -12473,7 +12489,6 @@ private extern (C++) final class ExpressionSemanticVisitor : Visitor
                 break;
             }
             ae.e1 = ae1old; // recovery
-            ae.lengthVar = null;
         }
 
         /* Run this.e1 semantic.
@@ -17155,6 +17170,9 @@ bool checkValue(Expression e)
         return true;
     }
 
+    if (auto ie = e.isIntervalExp())
+        return ie.lwr.checkValue() | ie.upr.checkValue();
+
     if (e.type && e.type.toBasetype().ty == Tvoid)
     {
         // https://issues.dlang.org/show_bug.cgi?id=5010
@@ -17371,6 +17389,7 @@ bool checkSharedAccess(Expression e, Scope* sc, bool returnRef = false)
             // Those have no indirections / can be ignored
             case EXP.call:
             case EXP.error:
+            case EXP.float64:
             case EXP.complex80:
             case EXP.int64:
             case EXP.null_:       return false;
@@ -18467,6 +18486,7 @@ private bool fit(StructDeclaration sd, Loc loc, Scope* sc, Expressions* elements
         if (e.op == EXP.error)
             return false;
 
+        e = checkNoreturnVarAccess(e);
         (*elements)[i] = doCopyOrMove(sc, e, null, false);
     }
     return true;

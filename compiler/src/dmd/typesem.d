@@ -5026,10 +5026,13 @@ Expression defaultInitLiteral(Type t, Loc loc, const bool isCfile = false)
         }
         size_t d = cast(size_t)tsa.dim.toInteger();
         Expression elementinit;
-        if (tsa.next.ty == Tvoid)
-            elementinit = Type.tuns8.defaultInitLiteral(loc, isCfile);
-        else
-            elementinit = tsa.next.defaultInitLiteral(loc, isCfile);
+        if (d > 0)
+        {
+            if (tsa.next.ty == Tvoid)
+                elementinit = Type.tuns8.defaultInitLiteral(loc, isCfile);
+            else
+                elementinit = tsa.next.defaultInitLiteral(loc, isCfile);
+        }
         auto elements = new Expressions(d);
         foreach (ref e; *elements)
             e = null;
@@ -7983,75 +7986,6 @@ Type addStorageClass(Type type, STC stc)
     }
 }
 
-/**********************************************
- * Extract complex type from core.stdc.config
- * Params:
- *      loc = for error messages
- *      sc = context
- *      ty = a complex or imaginary type
- * Returns:
- *      Complex!float, Complex!double, Complex!real or null for error
- */
-
-Type getComplexLibraryType(Loc loc, Scope* sc, TY ty)
-{
-    // singleton
-    __gshared Type complex_float;
-    __gshared Type complex_double;
-    __gshared Type complex_real;
-
-    Type* pt;
-    Identifier id;
-    switch (ty)
-    {
-        case Timaginary32:
-        case Tcomplex32:   id = Id.c_complex_float;  pt = &complex_float;  break;
-        case Timaginary64:
-        case Tcomplex64:   id = Id.c_complex_double; pt = &complex_double; break;
-        case Timaginary80:
-        case Tcomplex80:   id = Id.c_complex_real;   pt = &complex_real;   break;
-        default:
-             return Type.terror;
-    }
-
-    if (*pt)
-        return *pt;
-    *pt = Type.terror;
-
-    auto eSink = global.errorSink;
-
-    Module mConfig = loadCoreStdcConfig();
-    if (!mConfig)
-    {
-        eSink.error(loc, "`core.stdc.config` is required for complex numbers");
-        return *pt;
-    }
-
-    Dsymbol s = mConfig.searchX(Loc.initial, sc, id, SearchOpt.ignorePrivateImports);
-    if (!s)
-    {
-        eSink.error(loc, "`%s` not found in core.stdc.config", id.toErrMsg());
-        return *pt;
-    }
-    s = s.toAlias();
-    if (auto t = dmd.dsymbolsem.getType(s))
-    {
-        if (auto ts = t.toBasetype().isTypeStruct())
-        {
-            *pt = ts;
-            return ts;
-        }
-    }
-    if (auto sd = s.isStructDeclaration())
-    {
-        *pt = sd.type;
-        return sd.type;
-    }
-
-    eSink.error(loc, "`%s` must be an alias for a complex struct", s.toErrMsg());
-    return *pt;
-}
-
 /*******************************
  * Covariant means that 'src' can substitute for 't',
  * i.e. a pure function is a match for an impure type.
@@ -9617,7 +9551,7 @@ Expression getMaxMinValue(EnumDeclaration ed, Loc loc, Identifier id)
     if (!(ed.memtype && ed.memtype.isIntegral()))
     {
         eSink.error(loc, "%s `%s` has no `.%s` property because base type `%s` is not an integral type", ed.kind, ed.toPrettyChars, id.toErrMsg(),
-              id.toErrMsg(), ed.memtype ? ed.memtype.toErrMsg() : "");
+              ed.memtype ? ed.memtype.toErrMsg() : "");
         return errorReturn();
     }
 

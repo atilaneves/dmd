@@ -155,7 +155,6 @@ int elemisone(elem* e)
             case TYchar:
             case TYuchar:
             case TYschar:
-            case TYchar16:
             case TYshort:
             case TYushort:
             case TYint:
@@ -220,7 +219,6 @@ int elemisnegone(elem* e)
             case TYchar:
             case TYuchar:
             case TYschar:
-            case TYchar16:
             case TYshort:
             case TYushort:
             case TYint:
@@ -1317,24 +1315,6 @@ private elem* elmin(elem* e, Goal goal)
         }
     }
 
-    if (I16 && tybasic(e2.Ety) == TYhptr && tybasic(e.E1.Ety) == TYhptr)
-    {   // Convert to _aNahdiff(e1,e2)
-        if (!cgel.hdiff)
-        {
-            Symbol* s = symbol_calloc(LARGECODE ? "_aFahdiff" : "_aNahdiff");
-            s.Stype = tsclib;
-            s.Sclass = SC.extern_;
-            s.Sfl = FL.func;
-            s.Ssymnum = 0;
-            s.Sregsaved = mBX|mCX|mSI|mDI|mBP|mES;
-            cgel.hdiff = s;
-        }
-        e.Eoper = OPcall;
-        e.E2 = el_bin(OPparam,TYint,e2,e.E1);
-        e.E1 = el_var(cgel.hdiff);
-        return e;
-    }
-
     /* Disallow the optimization on doubles. The - operator is not
      * rearrangable by K+R, and can cause floating point problems if
      * converted to an add ((a + 1.0) - 1.0 shouldn't be folded).
@@ -1549,16 +1529,6 @@ private elem* elbitwise(elem* e, Goal goal)
                 e.E1 = e1.E1;
                 e1.E1 = e;
                 e = e1;
-                goto Lopt;
-            }
-
-            // Replace (((a & b) ^ c) & d) with ((a ^ c) & e), where
-            // e is (b&d).
-            if (e.Eoper == OPand && op == OPxor && e1.E1.Eoper == OPand &&
-                e1.E1.E2.Eoper == OPconst)
-            {
-                e2.Vullong &= e1.E1.E2.Vullong;
-                e1.E1 = el_selecte1(e1.E1);
                 goto Lopt;
             }
 
@@ -2684,7 +2654,7 @@ private elem* eldiv(elem* e, Goal goal)
             {
                 // The transformation will fail if c1*c2 overflows. This substitutes
                 // for a proper overflow check.
-                if (uns1 ? (c1 < SQRT_UINT_MAX && c2 < SQRT_UINT_MAX)
+                if (uns1 ? (cast(ulong)c1 < SQRT_UINT_MAX && cast(ulong)c2 < SQRT_UINT_MAX)
                          : (-SQRT_INT_MAX < c1 && c1 < SQRT_INT_MAX && -SQRT_INT_MAX < c2 && c2 < SQRT_INT_MAX))
                 {
                     e.E1 = e1.E1;
@@ -2715,7 +2685,7 @@ private elem* eldiv(elem* e, Goal goal)
             {
                 // The transformation will fail if c1*c2 overflows. This substitutes
                 // for a proper overflow check.
-                if (uns1 ? (c1 < SQRT_UINT_MAX && c2 < SQRT_UINT_MAX)
+                if (uns1 ? (cast(ulong)c1 < SQRT_UINT_MAX && cast(ulong)c2 < SQRT_UINT_MAX)
                          : (-SQRT_INT_MAX < c1 && c1 < SQRT_INT_MAX && -SQRT_INT_MAX < c2 && c2 < SQRT_INT_MAX))
                 {
                     e.E1 = erq.E1;
@@ -2772,7 +2742,7 @@ private elem* eldiv(elem* e, Goal goal)
                         op = (sz == 2) ? OP32_16 : (sz == 4) ? OP64_32 : OP128_64;
                     }
                     e.Eoper = OPremquo;
-                    e = el_una(op, tym, e);
+                    e = el_una(op, e.Ety, e);
                     e.E1.Ety = (sz == 2) ? TYlong : (sz == 4) ? TYllong : TYcent;
                     return e;
                 }
@@ -2793,6 +2763,7 @@ private elem* swaplog(elem* e, Goal goal)
     elem* e1 = e.E1;
     e.E1 = e1.E2;
     e1.E2 = e;
+    e1.Ety = e.Ety;
     return optelem(e1,goal);
 }
 
@@ -2929,7 +2900,7 @@ L1:
 @trusted
 private bool optim_loglog(ref elem* pe)
 {
-    if (I16 || config.target_cpu == TARGET_AArch64)
+    if (config.target_cpu == TARGET_AArch64)
         return false;
     elem* e = pe;
     const op = e.Eoper;
@@ -5392,7 +5363,8 @@ private elem* elshl(elem* e, Goal goal)
         e2.Eoper == OPconst &&
         (e1.Eoper == OPshr || e1.Eoper == OPashr) &&
         e1.E2.Eoper == OPconst &&
-        el_tolong(e2) == el_tolong(e1.E2))
+        el_tolong(e2) == el_tolong(e1.E2) &&
+        e.Eoper == OPshl)
     {   /* Rewrite:
          *  (x >> c) << c)
          * with:

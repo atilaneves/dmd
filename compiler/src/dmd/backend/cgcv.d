@@ -141,9 +141,7 @@ enum CVIDMAX = (0xFF0-20);   // the -20 is picked by trial and error
 
 enum LOCATsegrel = 0xC000;
 
-/* Unfortunately, the fixup stuff is different for EASY OMF and Microsoft */
-enum EASY_LCFDoffset  =      (LOCATsegrel | 0x1404);
-enum EASY_LCFDpointer =      (LOCATsegrel | 0x1800);
+/* Unfortunately, the fixup stuff is different for Microsoft */
 
 enum LCFD32offset     =      (LOCATsegrel | 0x2404);
 enum LCFD32pointer    =      (LOCATsegrel | 0x2C00);
@@ -388,13 +386,7 @@ void cv_init()
         dttab4[TYcptr] = 0x400;
         dttab4[TYfptr] = 0x500;
 
-        if (config.flags & CFGeasyomf)
-        {   cgcv.LCFDoffset  = EASY_LCFDoffset;
-            cgcv.LCFDpointer = EASY_LCFDpointer;
-            assert(config.fulltypes == CVOLD);
-        }
-        else
-            cgcv.LCFDpointer = LCFD32pointer;
+	cgcv.LCFDpointer = LCFD32pointer;
 
         if (config.exe & EX_flat)
             cgcv.FD_code = 0x10;
@@ -633,7 +625,6 @@ L1:
         case TYchar:
         case TYschar:
         case TYuchar:
-        case TYchar16:
         case TYshort:
         case TYushort:
         case TYint:
@@ -920,8 +911,6 @@ __gshared ubyte[TYMAX] dttab =
     TYchar    : 0x80,
     TYschar   : 0x80,
     TYuchar   : 0x84,
-    TYchar8   : 0x84,
-    TYchar16  : 0x85,
     TYshort   : 0x81,
     TYwchar_t : 0x85,
     TYushort  : 0x85,
@@ -1027,8 +1016,6 @@ __gshared ushort[TYMAX] dttab4 =
     TYchar    : 0x70,
     TYschar   : 0x10,
     TYuchar   : 0x20,
-    TYchar8   : 0x20,
-    TYchar16  : 0x21,
     TYshort   : 0x11,
     TYwchar_t : 0x71,
     TYushort  : 0x21,

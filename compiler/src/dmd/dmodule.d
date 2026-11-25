@@ -319,29 +319,11 @@ extern (C++) final class Module : Package
     Package pkg;                // if isPackageFile is true, the Package that contains this package.d
     Strings contentImportedFiles; // array of files whose content was imported
     int needmoduleinfo;
-    private ThreeState selfimports;
     private ThreeState rootimports;
     Dsymbol[void*] tagSymTab;   /// ImportC: tag symbols that conflict with other symbols used as the index
 
     private OutBuffer defines;  // collect all the #define lines here
 
-
-    /*************************************
-     * Return true if module imports itself.
-     */
-    bool selfImports()
-    {
-        //printf("Module::selfImports() %s\n", toChars());
-        if (selfimports == ThreeState.none)
-        {
-            foreach (Module m; amodules)
-                m.insearch = false;
-            selfimports = imports(this) ? ThreeState.yes : ThreeState.no;
-            foreach (Module m; amodules)
-                m.insearch = false;
-        }
-        return selfimports == ThreeState.yes;
-    }
 
     /*************************************
      * Return true if module imports root module.
@@ -351,18 +333,25 @@ extern (C++) final class Module : Package
         //printf("Module::rootImports() %s\n", toChars());
         if (rootimports == ThreeState.none)
         {
-            foreach (Module m; amodules)
-                m.insearch = false;
-            rootimports = ThreeState.no;
-            foreach (Module m; amodules)
+            static bool search(Module m, ref Modules visited)
             {
-                if (m.isRoot() && imports(m))
+                foreach (mi; m.aimports)
                 {
-                    rootimports = ThreeState.yes;
-                    break;
+                    if (mi.isRoot())
+                        return true;
+                    if (mi.insearch)
+                        continue;
+                    mi.insearch = true;
+                    visited.push(mi);
+                    if (search(mi, visited))
+                        return true;
                 }
+                return false;
             }
-            foreach (Module m; amodules)
+
+            Modules visited;
+            rootimports = search(this, visited) ? ThreeState.yes : ThreeState.no;
+            foreach (m; visited)
                 m.insearch = false;
         }
         return rootimports == ThreeState.yes;
@@ -949,40 +938,6 @@ extern (C++) final class Module : Package
             File.remove(objfile.toChars());
         if (docfile)
             File.remove(docfile.toChars());
-    }
-
-    extern (D) static void clearCache() nothrow
-    {
-        foreach (Module m; amodules)
-            m.searchCacheIdent = null;
-    }
-
-    /************************************
-     * Recursively look at every module this module imports,
-     * return true if it imports m.
-     * Can be used to detect circular imports.
-     */
-    int imports(Module m) nothrow
-    {
-        //printf("%s Module::imports(%s)\n", toChars(), m.toChars());
-        version (none)
-        {
-            foreach (i, Module mi; aimports)
-                printf("\t[%d] %s\n", cast(int) i, mi.toChars());
-        }
-        foreach (Module mi; aimports)
-        {
-            if (mi == m)
-                return true;
-            if (!mi.insearch)
-            {
-                mi.insearch = true;
-                int r = mi.imports(m);
-                if (r)
-                    return r;
-            }
-        }
-        return false;
     }
 
     bool isRoot() nothrow

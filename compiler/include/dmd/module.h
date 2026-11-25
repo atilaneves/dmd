@@ -77,12 +77,9 @@ public:
     Package *pkg;       // if isPackageFile is true, the Package that contains this package.d
     Strings contentImportedFiles;  // array of files whose content was imported
     int needmoduleinfo;
-    ThreeState selfimports;
     ThreeState rootimports;
     void* tagSymTab;            // ImportC: tag symbols that conflict with other symbols used as the index
     OutBuffer defines;          // collect all the #define lines here
-    bool selfImports();         // returns true if module imports itself
-
     bool rootImports();         // returns true if module imports root module
 
     Identifier *searchCacheIdent;
@@ -117,7 +114,6 @@ public:
     int needModuleInfo();
     bool isPackageAccessible(Package *p, Visibility visibility, SearchOptFlags flags = (SearchOptFlags)SearchOpt::all) override;
     Dsymbol *symtabInsert(Dsymbol *s) override;
-    int imports(Module *m);
 
     bool isRoot() { return this->importedFrom == this; }
     // true if the module source file is directly

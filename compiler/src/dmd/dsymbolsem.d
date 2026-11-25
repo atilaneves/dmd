@@ -623,7 +623,6 @@ Dsymbol search_correct(Scope* _this, Identifier ident)
         if (!id)
             return null;
         Scope* sc = _this;
-        Module.clearCache();
         Dsymbol scopesym;
         Dsymbol s = sc.search(Loc.initial, id, scopesym, SearchOpt.ignoreErrors);
         if (!s)
@@ -719,6 +718,34 @@ void dsymbolSemantic(Dsymbol dsym, Scope* sc)
 {
     scope v = new DsymbolSemanticVisitor(sc);
     dsym.accept(v);
+}
+
+/*************************************
+ * Run the semantic analysis CTFE needs on function or variable `s`.
+ * CTFE can call a function whose body is not analysed yet (e.g. one from an
+ * imported module), or read a variable whose initializer is still pending.
+ * The interpreter asks for that here instead of calling the semantic routines
+ * itself, so CTFE starts semantic in one place only.
+ * Returns: false on error
+ */
+bool ctfeSemantic(Dsymbol s)
+{
+    if (auto fd = s.isFuncDeclaration())
+        return functionSemantic3(fd);
+
+    auto v = s.isVarDeclaration();
+    if (!v.originalType && v.semanticRun < PASS.semanticdone) // semantic() not yet run
+    {
+        v.dsymbolSemantic(null);
+        return v.type.ty != Terror;
+    }
+    if (v._init && v._scope) // might not be run on aggregate members
+    {
+        v.inuse++;
+        v._init = v._init.initializerSemantic(v._scope, v.type, INITinterpret, global.errorSink);
+        v.inuse--;
+    }
+    return true;
 }
 
 
@@ -2639,7 +2666,8 @@ private extern(C++) final class DsymbolSemanticVisitor : Visitor
                         dsym.semanticRun = PASS.semanticdone;
                         return;
                     }
-                    if (auto ale = ie.isArrayLiteralExp())
+                    auto ale = ie.isArrayLiteralExp();
+                    if (ale && !dsym._init.isArrayInitializer())
                     {
                         // Fill null gaps left by sparse auto[$] inference,
                         // now that dimensions are fully resolved.
@@ -7604,49 +7632,6 @@ bool determineFields(AggregateDeclaration ad)
     return true;
 }
 
-/****************************
- * A Singleton that loads core.stdc.config
- * Returns:
- *  Module of core.stdc.config, null if couldn't find it
- */
-Module loadCoreStdcConfig()
-{
-    __gshared Module core_stdc_config;
-    auto pkgids = new Identifier[2];
-    pkgids[0] = Id.core;
-    pkgids[1] = Id.stdc;
-    return loadModuleFromLibrary(core_stdc_config, pkgids, Id.config);
-}
-
-/**********************************
- * Load a Module from the library.
- * Params:
- *  mod = cached return value of this call
- *  pkgids = package identifiers
- *  modid = module id
- * Returns:
- *  Module loaded, null if cannot load it
- */
-extern (D) private static Module loadModuleFromLibrary(ref Module mod, Identifier[] pkgids, Identifier modid)
-{
-    if (mod)
-        return mod;
-
-    auto imp = new Import(Loc.initial, pkgids[], modid, null, true);
-    // Module.load will call fatal() if there's no module available.
-    // Gag the error here, pushing the error handling to the caller.
-    const errors = global.startGagging();
-    imp.load(null);
-    if (imp.mod)
-    {
-        imp.mod.importAll(null);
-        imp.mod.dsymbolSemantic(null);
-    }
-    global.endGagging(errors);
-    mod = imp.mod;
-    return mod;
-}
-
 /// Do an atomic operation (currently tailored to [shared] static ctors|dtors) needs
 private CallExp doAtomicOp(string op, Identifier var, Expression arg, Scope* sc)
 {
@@ -7785,7 +7770,6 @@ Dsymbol search_correct(Dsymbol d, Identifier ident)
             return null;
         cost = 0;   // all the same cost
         Dsymbol s = d;
-        Module.clearCache();
         return s.search(Loc.initial, id, SearchOpt.ignoreErrors);
     }
 
@@ -8094,7 +8078,7 @@ private extern(C++) class SearchVisitor : Visitor
             /* array[e0, e1, e2, e3] where e0, e1, e2 are some function of $
              * $ is a opDollar!(dim)() where dim is the dimension(0,1,2,...)
              */
-            pvar = &ae.lengthVar;
+            pvar = &ass.dollarVar;
             ce = ae.e1;
         }
         else
@@ -8146,9 +8130,9 @@ private extern(C++) class SearchVisitor : Visitor
                 if (TemplateDeclaration td = s.isTemplateDeclaration())
                 {
                     dinteger_t dim = 0;
-                    if (auto ae = exp.isArrayExp())
+                    if (exp.isArrayExp())
                     {
-                        dim = ae.currentDimension;
+                        dim = ass.dollarDim;
                     }
                     else if (exp.isSliceExp())
                     {

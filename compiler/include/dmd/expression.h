@@ -777,9 +777,9 @@ public:
     Expressions *arguments;     // function arguments
     ArgumentLabels* names;      // function argument Labels (name + location of name)
     FuncDeclaration *f;         // symbol to call
-    d_bool directcall;            // true if a virtual call is devirtualized
-    d_bool inDebugStatement;      // true if this was in a debug statement
-    d_bool ignoreAttributes;      // don't enforce attributes (e.g. call @gc function in @nogc code)
+    d_bool directcall;          // true if a virtual call is devirtualized
+    d_bool inDebugStatement;    // true if this was in a debug statement
+    d_bool ignoreAttributes;    // don't enforce attributes (e.g. call @gc function in @nogc code)
     d_bool isUfcsRewrite;       // the first argument was pushed in here by a UFCS rewrite
     d_bool fromOpOverload;      // set for operator overload method call
     d_bool fromOpAssignment;    // set when operator overload method call from assignment (2024 edition)
@@ -925,8 +925,6 @@ class ArrayExp final : public UnaExp
 {
 public:
     Expressions *arguments;             // Array of Expression's
-    size_t currentDimension;            // for opDollar
-    VarDeclaration *lengthVar;
     d_bool modifiable;
 
     ArrayExp *syntaxCopy() override;
