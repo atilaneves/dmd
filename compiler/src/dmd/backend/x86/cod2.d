@@ -2521,7 +2521,14 @@ void cdcond(ref CGstate cg, ref CodeBuilder cdb,elem* e,ref regm_t pretregs)
         fixresult(cg,cdb2,e22,retregs,pretregs);
     }
     else
+    {
+        /* Use the same return registers as E1 unless pretregs is 0
+         * when we want the retregs to be 0
+         */
+        if (pretregs == 0)
+            retregs = 0;
         codelem(cg,cdb2,e22,retregs,false);   // use same regs as E1
+    }
     pretregs = retregs | psw;
     andregcon(regconold);
     andregcon(regconsave);
@@ -3313,7 +3320,7 @@ void cdind(ref CGstate cg, ref CodeBuilder cdb,elem* e,ref regm_t pretregs)
             getlvalue_msw(cs);
             cdb.gen(&cs);             // MOV reg,msw
             if (I32)
-            {   if (tym == TYdouble || tym == TYdouble_alias)
+            {   if (tym == TYdouble)
                     cdb.gen2(0xD1,modregrm(3,4,reg)); // SHL reg,1
             }
             else if (tym == TYfloat)
@@ -5190,7 +5197,7 @@ if (config.exe & EX_windos)
         scodelem(cg,cdb,e2,retregs,idxregs,false);
         cg.stackclean--;
 
-        if (tyml == TYdouble || tyml == TYdouble_alias)
+        if (tyml == TYdouble)
         {
             retregs = DOUBLEREGS;
             callclib(cg,cdb,e,(op == OPpostinc) ? CLIB.dadd : CLIB.dsub,
@@ -5205,7 +5212,7 @@ if (config.exe & EX_windos)
         cs.Iop = 0x89;                  /* MOV EA,DOUBLEREGS            */
         fltregs(cdb,&cs,tyml);
         stackpushsave = cg.stackpush;
-        if (tyml == TYdouble || tyml == TYdouble_alias)
+        if (tyml == TYdouble)
         {   if (pretregs == mSTACK)
                 retregs = mSTACK;       /* leave result on stack        */
             else

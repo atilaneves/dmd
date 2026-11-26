@@ -343,8 +343,6 @@ void test24319()
 /**************************************************/
 // https://github.com/dlang/dmd/issues/24320
 
-static if (0)
-{
 version (D_SIMD)
 {
     __gshared ulong g0_24320 = 1;
@@ -356,7 +354,6 @@ version (D_SIMD)
     {
         assert(f_24320()[0] == 1);
     }
-}
 }
 
 /**************************************************/
@@ -431,19 +428,6 @@ void test24327()
     assert(f_24327() == 1);
 }
 
-int f_24328(long p)
-{
-    int v = 0;
-    if (0 < p - 1)
-        v = 1;
-    return v;
-}
-
-void test24328()
-{
-    assert(f_24328(long.min) == 1);
-}
-
 int f_24325b()
 {
     int n = 0;
@@ -460,7 +444,28 @@ void test24325b()
 {
     assert(f_24325b() == 9);
 }
+}
 
+/***********************************************/
+// https://github.com/dlang/dmd/issues/24328
+int f(long p)
+{
+    int v = 0;
+    if (0 < p - 1)
+        v = 1;
+    return v;
+}
+
+void test24328()
+{
+    assert(f(long.min) == 1); // fails
+}
+
+/***********************************************/
+// https://github.com/dlang/dmd/issues/24329
+
+static if (0)
+{
 int f_24329()
 {
     int n = 0;
@@ -796,11 +801,25 @@ version (D_AVX)
         assert(f_24343c(5)[0] == 0x30012);
     }
 }
+}
 
-int g_24345();
+/****************************************************/
+// https://github.com/dlang/dmd/issues/24345
+
+int g_24345() { return 1; }
 
 bool f_24345() { return g_24345() && bswap(0UL); }
 
+void test24345()
+{
+    assert(!f_24345());
+}
+
+/****************************************************/
+// https://github.com/dlang/dmd/issues/24346
+
+static if (0)
+{
 pragma(inline, true) ulong z_24346(double x) { return 0; }
 
 real f_24346()
@@ -988,13 +1007,13 @@ void main()
     test24317();
     //test24318();
     test24319();
-    //version (D_SIMD) test24320();
+    version (D_SIMD) test24320();
     test24321();
     test24323();
     //test24309d();
     //test24325a();
     //test24327();
-    //test24328();
+    test24328();
     //test24325b();
     //test24329();
     test24330();
@@ -1019,6 +1038,7 @@ void main()
     //version (D_AVX2) test24343a();
     //version (D_SIMD) test24343b();
     //version (D_AVX) test24343c();
+    test24345();
     //test24351a();
     //test24351g();
     //test24351b();
